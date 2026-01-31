@@ -102,8 +102,10 @@ def _validate_models(models: Iterable[Dict[str, Any]], depth_default: int) -> Li
         if not model or not isinstance(model, str):
             raise ConfigurationError("Model config requires 'model' string.")
         fields = item.get("fields")
-        if not fields or not isinstance(fields, list):
-            raise ConfigurationError("Model config requires 'fields' list.")
+        if fields == "__all__" or (isinstance(fields, list) and fields == ["__all__"]):
+            fields = ["__all__"]
+        elif not fields or not isinstance(fields, list):
+            raise ConfigurationError("Model config requires 'fields' list or '__all__'.")
         follow_relations = bool(item.get("follow_relations", True))
         relation_depth = int(item.get("relation_depth", depth_default))
         weight_fields = item.get("weight_fields", {})

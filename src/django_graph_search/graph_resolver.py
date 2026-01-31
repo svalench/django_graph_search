@@ -14,10 +14,16 @@ class GraphResolver:
 
     def build_searchable_text(self, instance: models.Model, config: ModelConfig) -> str:
         parts: List[str] = []
-        for field_path in config.fields:
-            value = self._resolve_path(instance, field_path)
-            for text in self._normalize_to_texts(value):
-                parts.extend(self._apply_weight(text, config.weight_fields.get(field_path)))
+        if config.fields == ["__all__"]:
+            field_dict = self._collect_fields(instance)
+            for name, value in field_dict.items():
+                for text in self._normalize_to_texts(value):
+                    parts.extend(self._apply_weight(text, config.weight_fields.get(name)))
+        else:
+            for field_path in config.fields:
+                value = self._resolve_path(instance, field_path)
+                for text in self._normalize_to_texts(value):
+                    parts.extend(self._apply_weight(text, config.weight_fields.get(field_path)))
 
         if config.follow_relations and config.relation_depth > 0:
             related_texts = self._collect_related_text(instance, config.relation_depth)
