@@ -1,0 +1,24 @@
+[MASTER]
+ignore=build,dist,.venv,venv
+
+[MESSAGES CONTROL]
+disable=
+    import-error,
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    invalid-name,
+    too-few-public-methods,
+    too-many-arguments,
+    too-many-positional-arguments,
+    too-many-instance-attributes,
+    too-many-locals,
+    broad-exception-caught,
+    protected-access,
+    unused-argument,
+    unused-import,
+    duplicate-code,
+    trailing-newlines,
+    import-outside-toplevel,
+    relative-beyond-top-level
+
