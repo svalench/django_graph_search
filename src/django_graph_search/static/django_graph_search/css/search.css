@@ -1,0 +1,45 @@
+.graph-search {
+  max-width: 960px;
+}
+
+.graph-search__form {
+  margin-bottom: 16px;
+}
+
+.graph-search__row {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 8px;
+}
+
+.graph-search__row label {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.graph-search__row input {
+  padding: 6px 10px;
+  max-width: 520px;
+}
+
+.graph-search__actions {
+  margin-top: 8px;
+}
+
+.graph-search__results {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.graph-search__results th,
+.graph-search__results td {
+  border: 1px solid #ddd;
+  padding: 6px 8px;
+  vertical-align: top;
+}
+
+.graph-search__hint {
+  margin-bottom: 12px;
+  color: #666;
+}
+

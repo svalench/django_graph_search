@@ -1,0 +1,70 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block extrastyle %}
+  <link rel="stylesheet" href="{% static 'django_graph_search/css/search.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="graph-search">
+    <h1>Graph Search</h1>
+    <form method="get" class="graph-search__form">
+      <div class="graph-search__row">
+        <label for="q">Запрос</label>
+        <input type="text" name="q" id="q" value="{{ query }}" placeholder="Введите запрос">
+      </div>
+      <div class="graph-search__row">
+        <label for="models">Модели (через запятую)</label>
+        <input type="text" name="models" id="models" value="{{ model_list }}"
+               placeholder="app.Model, app.OtherModel">
+      </div>
+      <div class="graph-search__actions">
+        <button type="submit" class="default">Искать</button>
+      </div>
+    </form>
+
+    {% if available_models %}
+      <div class="graph-search__hint">
+        Доступные модели: {{ available_models|join:", " }}
+      </div>
+    {% endif %}
+
+    {% if results %}
+      <table class="graph-search__results">
+        <thead>
+          <tr>
+            <th>Модель</th>
+            <th>ID</th>
+            <th>Score</th>
+            <th>Данные</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in results %}
+            <tr>
+              <td>{{ item.model }}</td>
+              <td>
+                {% if item.admin_url %}
+                  <a href="{{ item.admin_url }}">{{ item.pk }}</a>
+                {% else %}
+                  {{ item.pk }}
+                {% endif %}
+              </td>
+              <td>{{ item.score }}</td>
+              <td>
+                {% if item.data %}
+                  <pre>{{ item.data }}</pre>
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% elif query %}
+      <p>Результаты не найдены.</p>
+    {% endif %}
+  </div>
+{% endblock %}
+
