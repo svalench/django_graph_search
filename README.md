@@ -45,6 +45,7 @@ GRAPH_SEARCH = {
             "follow_relations": True,
             "relation_depth": 2,
         },
+        # Or index all concrete fields: "fields": "__all__"
     ],
     "VECTOR_STORE": {
         "BACKEND": "django_graph_search.backends.ChromaDBBackend",
@@ -132,6 +133,16 @@ from django_graph_search import search, index, get_similar
 results = search("red smartphone", models=["shop.Product"], limit=5)
 index(product_instance)
 similar = get_similar(product_instance, limit=5)
+```
+
+---
+
+## Model config: fields
+
+For each model you can list fields to index (including relations via `__`, e.g. `category__name`), or use **`"fields": "__all__"`** to index all concrete fields of the model. With `follow_relations: true`, related objects are still traversed up to `relation_depth` regardless of `fields`.
+
+```python
+{"model": "shop.Product", "fields": "__all__", "follow_relations": True, "relation_depth": 2}
 ```
 
 ---
