@@ -4,13 +4,12 @@ from typing import Iterable, List, Optional
 
 from django.apps import apps
 from django.db import models
-from django.utils.module_loading import import_string
-
 from .backends.base import Document
 from .cache import BaseDeltaCache, build_delta_cache
 from .exceptions import ConfigurationError
+from .factory import build_components
 from .graph_resolver import GraphResolver
-from .settings import GraphSearchConfig, ModelConfig, get_settings
+from .settings import GraphSearchConfig, ModelConfig
 from .utils import hash_text
 
 
@@ -28,21 +27,18 @@ class Indexer:
         embedding_profile: Optional[str] = None,
         delta_cache: Optional[BaseDeltaCache] = None,
     ) -> None:
-        self.config = config or get_settings()
-        if vector_store is None:
-            backend_cls = import_string(self.config.vector_store.backend)
-            vector_store = backend_cls(**self.config.vector_store.options)
-        if embedding_backend is None:
-            profile_name = embedding_profile or self.config.default_embedding
-            profile = self.config.embeddings[profile_name]
-            embed_cls = import_string(profile.backend)
-            embedding_backend = embed_cls(
-                model_name=profile.model_name,
-                **profile.options,
-            )
-        self.vector_store = vector_store
-        self.embedding_backend = embedding_backend
-        self.resolver = resolver or GraphResolver()
+        (
+            self.config,
+            self.vector_store,
+            self.embedding_backend,
+            self.resolver,
+        ) = build_components(
+            config=config,
+            vector_store=vector_store,
+            embedding_backend=embedding_backend,
+            resolver=resolver,
+            embedding_profile=embedding_profile,
+        )
         self.delta_cache = delta_cache
         if self.delta_cache is None and self.config.delta_indexing:
             self.delta_cache = build_delta_cache(self.config)

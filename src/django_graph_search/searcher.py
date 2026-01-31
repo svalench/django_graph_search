@@ -4,8 +4,7 @@ from typing import Iterable, List, Optional
 
 from django.apps import apps
 from django.urls import reverse
-from django.utils.module_loading import import_string
-
+from .factory import build_components
 from .graph_resolver import GraphResolver
 from .settings import GraphSearchConfig, ModelConfig, get_settings
 
@@ -19,21 +18,18 @@ class Searcher:
         resolver: Optional[GraphResolver] = None,
         embedding_profile: Optional[str] = None,
     ) -> None:
-        self.config = config or get_settings()
-        if vector_store is None:
-            backend_cls = import_string(self.config.vector_store.backend)
-            vector_store = backend_cls(**self.config.vector_store.options)
-        if embedding_backend is None:
-            profile_name = embedding_profile or self.config.default_embedding
-            profile = self.config.embeddings[profile_name]
-            embed_cls = import_string(profile.backend)
-            embedding_backend = embed_cls(
-                model_name=profile.model_name,
-                **profile.options,
-            )
-        self.vector_store = vector_store
-        self.embedding_backend = embedding_backend
-        self.resolver = resolver or GraphResolver()
+        (
+            self.config,
+            self.vector_store,
+            self.embedding_backend,
+            self.resolver,
+        ) = build_components(
+            config=config,
+            vector_store=vector_store,
+            embedding_backend=embedding_backend,
+            resolver=resolver,
+            embedding_profile=embedding_profile,
+        )
 
     def search(
         self,

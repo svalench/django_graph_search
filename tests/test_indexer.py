@@ -1,16 +1,11 @@
 from django.test import TestCase
 
 from django_graph_search.indexer import Indexer
-from django_graph_search.settings import (
-    CacheConfig,
-    EmbeddingProfile,
-    GraphSearchConfig,
-    ModelConfig,
-    VectorStoreConfig,
-)
+from django_graph_search.settings import ModelConfig
 from django_graph_search.backends.base import Document
 
 from .test_app.models import Category, Product
+from .utils import make_basic_config
 
 
 class DummyVectorStore:
@@ -60,7 +55,8 @@ class IndexerTests(TestCase):
         Product.objects.create(name="Pixel", description="Good camera", category=category)
 
     def test_index_instance_adds_document(self):
-        config = GraphSearchConfig(
+        config = make_basic_config(
+            delta_indexing=False,
             models=[
                 ModelConfig(
                     model="test_app.Product",
@@ -69,17 +65,6 @@ class IndexerTests(TestCase):
                     relation_depth=1,
                 )
             ],
-            vector_store=VectorStoreConfig(backend="dummy"),
-            embeddings={
-                "default": EmbeddingProfile(backend="dummy", model_name="dummy"),
-            },
-            default_embedding="default",
-            api_url_prefix="api/search/",
-            admin_search_enabled=True,
-            auto_index=True,
-            default_results_limit=10,
-            delta_indexing=False,
-            cache=CacheConfig(backend="file"),
         )
         vector_store = DummyVectorStore()
         embedding_backend = DummyEmbeddingBackend()
@@ -95,7 +80,8 @@ class IndexerTests(TestCase):
         self.assertIsInstance(vector_store.docs[0], Document)
 
     def test_delta_indexing_skips_unchanged(self):
-        config = GraphSearchConfig(
+        config = make_basic_config(
+            delta_indexing=True,
             models=[
                 ModelConfig(
                     model="test_app.Product",
@@ -104,17 +90,6 @@ class IndexerTests(TestCase):
                     relation_depth=1,
                 )
             ],
-            vector_store=VectorStoreConfig(backend="dummy"),
-            embeddings={
-                "default": EmbeddingProfile(backend="dummy", model_name="dummy"),
-            },
-            default_embedding="default",
-            api_url_prefix="api/search/",
-            admin_search_enabled=True,
-            auto_index=True,
-            default_results_limit=10,
-            delta_indexing=True,
-            cache=CacheConfig(backend="file"),
         )
         vector_store = DummyVectorStore()
         embedding_backend = DummyEmbeddingBackend()

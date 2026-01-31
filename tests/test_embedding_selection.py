@@ -1,10 +1,7 @@
 from django_graph_search.searcher import Searcher
-from django_graph_search.settings import (
-    CacheConfig,
-    EmbeddingProfile,
-    GraphSearchConfig,
-    VectorStoreConfig,
-)
+from django_graph_search.settings import EmbeddingProfile
+
+from .utils import make_basic_config, with_embeddings
 
 
 class DummyVectorStore:
@@ -22,9 +19,13 @@ class DummyVectorStore:
 
 
 def test_default_embedding_profile_is_used():
-    config = GraphSearchConfig(
-        models=[],
-        vector_store=VectorStoreConfig(backend="dummy"),
+    base_config = make_basic_config(
+        delta_indexing=False,
+        embedding_backend="tests.dummy_embedding_backend.DummyEmbeddingBackend",
+        embedding_model="model-a",
+    )
+    config = with_embeddings(
+        base_config,
         embeddings={
             "default": EmbeddingProfile(
                 backend="tests.dummy_embedding_backend.DummyEmbeddingBackend",
@@ -36,12 +37,6 @@ def test_default_embedding_profile_is_used():
             ),
         },
         default_embedding="default",
-        api_url_prefix="api/search/",
-        admin_search_enabled=True,
-        auto_index=True,
-        default_results_limit=10,
-        delta_indexing=False,
-        cache=CacheConfig(backend="file"),
     )
     searcher = Searcher(config=config, vector_store=DummyVectorStore())
     assert searcher.embedding_backend.model_name == "model-a"
