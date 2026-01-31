@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from .apps import DjangoGraphSearchConfig
 from .indexer import Indexer
 from .searcher import Searcher

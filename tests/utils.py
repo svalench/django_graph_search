@@ -1,5 +1,7 @@
 """Test helpers for building configs."""
 
+from __future__ import annotations
+
 from typing import List
 
 from django_graph_search.settings import (
