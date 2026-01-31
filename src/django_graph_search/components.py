@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# pylint: disable=duplicate-code
+
 from typing import Optional
 
 from .factory import build_components

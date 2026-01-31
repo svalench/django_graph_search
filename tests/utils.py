@@ -36,8 +36,6 @@ def make_basic_config(
         delta_indexing=delta_indexing,
         cache=CacheConfig(backend="file"),
     )
-
-
 def with_embeddings(
     config: GraphSearchConfig,
     embeddings: dict,

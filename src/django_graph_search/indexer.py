@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# pylint: disable=duplicate-code
+
 from typing import Iterable, List, Optional
 
 from django.apps import apps

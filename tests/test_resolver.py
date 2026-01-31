@@ -8,7 +8,7 @@ from .test_app.models import Category, Product, Tag
 
 class GraphResolverTests(TestCase):
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls):  # pylint: disable=invalid-name
         category = Category.objects.create(name="Phones")
         tag1 = Tag.objects.create(name="Android")
         tag2 = Tag.objects.create(name="Budget")
@@ -20,6 +20,7 @@ class GraphResolverTests(TestCase):
         product.tags.set([tag1, tag2])
 
     def test_build_searchable_text_includes_relations(self):
+        """Ensure relation fields are included in searchable text."""
         product = Product.objects.first()
         resolver = GraphResolver()
         config = ModelConfig(
