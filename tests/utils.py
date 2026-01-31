@@ -1,3 +1,5 @@
+"""Test helpers for building configs."""
+
 from typing import List
 
 from django_graph_search.settings import (
@@ -16,6 +18,7 @@ def make_basic_config(
     embedding_backend: str = "dummy",
     embedding_model: str = "dummy",
 ) -> GraphSearchConfig:
+    """Create a minimal GraphSearchConfig for tests."""
     return GraphSearchConfig(
         models=models or [],
         vector_store=VectorStoreConfig(backend="dummy"),
@@ -40,6 +43,7 @@ def with_embeddings(
     embeddings: dict,
     default_embedding: str = "default",
 ) -> GraphSearchConfig:
+    """Return a config with overridden embedding profiles."""
     return GraphSearchConfig(
         models=config.models,
         vector_store=config.vector_store,
@@ -52,4 +56,5 @@ def with_embeddings(
         delta_indexing=config.delta_indexing,
         cache=config.cache,
     )
+
 

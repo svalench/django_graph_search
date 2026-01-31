@@ -7,7 +7,7 @@ from django.db import models
 from .backends.base import Document
 from .cache import BaseDeltaCache, build_delta_cache
 from .exceptions import ConfigurationError
-from .factory import build_components
+from .components import ComponentMixin
 from .graph_resolver import GraphResolver
 from .settings import GraphSearchConfig, ModelConfig
 from .utils import hash_text
@@ -17,7 +17,7 @@ def make_doc_id(model_label: str, pk: object) -> str:
     return f"{model_label}:{pk}"
 
 
-class Indexer:
+class Indexer(ComponentMixin):
     def __init__(
         self,
         config: Optional[GraphSearchConfig] = None,
@@ -27,12 +27,7 @@ class Indexer:
         embedding_profile: Optional[str] = None,
         delta_cache: Optional[BaseDeltaCache] = None,
     ) -> None:
-        (
-            self.config,
-            self.vector_store,
-            self.embedding_backend,
-            self.resolver,
-        ) = build_components(
+        self._init_components(
             config=config,
             vector_store=vector_store,
             embedding_backend=embedding_backend,

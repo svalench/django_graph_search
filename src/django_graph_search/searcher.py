@@ -4,12 +4,12 @@ from typing import Iterable, List, Optional
 
 from django.apps import apps
 from django.urls import reverse
-from .factory import build_components
+from .components import ComponentMixin
 from .graph_resolver import GraphResolver
 from .settings import GraphSearchConfig, ModelConfig, get_settings
 
 
-class Searcher:
+class Searcher(ComponentMixin):
     def __init__(
         self,
         config: Optional[GraphSearchConfig] = None,
@@ -18,12 +18,7 @@ class Searcher:
         resolver: Optional[GraphResolver] = None,
         embedding_profile: Optional[str] = None,
     ) -> None:
-        (
-            self.config,
-            self.vector_store,
-            self.embedding_backend,
-            self.resolver,
-        ) = build_components(
+        self._init_components(
             config=config,
             vector_store=vector_store,
             embedding_backend=embedding_backend,
