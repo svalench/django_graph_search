@@ -164,6 +164,8 @@ similar = get_similar(product_instance, limit=5)
 |---|---|---|
 | `/api/search/?q=...&models=...&limit=...` | `GET` | Semantic full-text search |
 | `/api/search/similar/{app}.{Model}/{id}/` | `GET` | Find similar objects |
+| `/api/search/conversation/` | `POST` | Session-aware conversational search (optional, see below) |
+| `/api/search/conversation/?conversation_id=...` | `DELETE` | Clear a conversation history |
 
 ## Management Commands
 
@@ -250,6 +252,61 @@ The library refuses to add hard dependencies on `langgraph` or any LLM SDK.
 If `langgraph` is not installed, the pipeline transparently uses an in-tree
 sequential runner with the same node structure, so behaviour and tests stay
 identical.
+
+## Conversational search (optional)
+
+For session-aware semantic search (follow-ups like "more", "only products",
+"similar") enable the conversational endpoint. It is a thin search-first
+shell on top of `Searcher` and never invents user intent: ambiguous
+follow-ups are surfaced as a structured `clarification_needed` flag instead
+of a hallucinated query.
+
+```python
+GRAPH_SEARCH = {
+    # ... existing config ...
+    "CONVERSATIONAL": {
+        "ENABLED": True,
+        "MEMORY_BACKEND": "inmemory",   # or "cache" / dotted path.
+        "MAX_HISTORY_ITEMS": 10,
+        "ALLOW_CLARIFICATIONS": True,
+    },
+}
+```
+
+Endpoint: `POST /api/search/conversation/`
+
+```json
+// Request
+{
+  "query": "only products",
+  "conversation_id": "abc-123",
+  "models": ["shop.Product"],
+  "limit": 5
+}
+
+// Response
+{
+  "conversation_id": "abc-123",
+  "query": "only products",
+  "interpreted_query": "red phone",
+  "clarification_needed": false,
+  "results": [...],
+  "total": 5
+}
+```
+
+Use `DELETE /api/search/conversation/?conversation_id=abc-123` to clear a
+conversation.
+
+Built-in memory backends:
+
+| Alias | Class | Best for |
+|---|---|---|
+| `inmemory` | `InMemoryBackend` | Tests, single-worker dev |
+| `cache` / `redis` | `DjangoCacheBackend` | Production via Django cache (Redis, memcached) |
+
+Bring your own by subclassing `BaseMemoryBackend` and pointing
+`MEMORY_BACKEND` at the dotted path.
 
 ## Comparison
 
