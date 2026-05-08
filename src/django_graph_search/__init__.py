@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .apps import DjangoGraphSearchConfig
-from .indexer import Indexer
+from .indexer import Indexer, get_indexer
 from .searcher import Searcher
 from .settings import get_settings
 
@@ -17,7 +17,7 @@ def index(instance) -> None:
     model_cfg = next((cfg for cfg in config.models if cfg.model == instance._meta.label), None)
     if model_cfg is None:
         return
-    Indexer(config=config).index_instance(instance, model_cfg)
+    get_indexer(config=config).index_instance(instance, model_cfg)
 
 
 def get_similar(instance, limit: int | None = None):
@@ -27,6 +27,7 @@ def get_similar(instance, limit: int | None = None):
 __all__ = [
     "DjangoGraphSearchConfig",
     "Indexer",
+    "get_indexer",
     "Searcher",
     "search",
     "index",

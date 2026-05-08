@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, TypedDict
 
+from .events import EventHub
 from .llm.base import BaseLLMBackend, RerankCandidate
 from .settings import GraphSearchConfig
 
@@ -232,34 +233,65 @@ def postprocess_results_node(state: SearchState) -> SearchState:
 # ---------------------------------------------------------------------------
 
 
-def build_search_graph(config: GraphSearchConfig, *, embedding_backend, vector_store, llm: BaseLLMBackend):
+def build_search_graph(
+    config: GraphSearchConfig,
+    *,
+    embedding_backend,
+    vector_store,
+    llm: BaseLLMBackend,
+    event_hub: Optional[EventHub] = None,
+):
     """Build and compile the search graph.
 
     When the ``langgraph`` package is available we return a compiled
     LangGraph ``StateGraph``. Otherwise we return :class:`_FallbackGraph` so
     the rest of the code stays identical.
+
+    Pass ``event_hub`` to receive lifecycle events (``query_received``,
+    ``query_expanded``, ``vector_search_completed``, ``rerank_completed``,
+    ``completed``) — the same hub powers the streaming HTTP endpoint.
     """
     try:
         from langgraph.graph import END, StateGraph  # type: ignore
     except Exception:  # pragma: no cover - exercised when langgraph absent.
-        return _FallbackGraph(config=config, embedding_backend=embedding_backend,
-                              vector_store=vector_store, llm=llm)
+        return _FallbackGraph(
+            config=config,
+            embedding_backend=embedding_backend,
+            vector_store=vector_store,
+            llm=llm,
+            event_hub=event_hub,
+        )
+
+    def _wrap(name: str, fn):
+        if event_hub is None:
+            return fn
+
+        def _wrapped(s):
+            event_hub.publish({"type": f"{name}_started", "query": s.get("normalized_query") or s.get("query")})
+            out = fn(s)
+            event_hub.publish({
+                "type": f"{name}_completed",
+                "candidate_count": len(out.get("merged_results") or out.get("raw_results") or []),
+            })
+            return out
+
+        return _wrapped
 
     graph: Any = StateGraph(dict)
-    graph.add_node("analyze_query", lambda s: analyze_query_node(s, config=config))
+    graph.add_node("analyze_query", _wrap("analyze_query", lambda s: analyze_query_node(s, config=config)))
     graph.add_node(
         "expand_query",
-        lambda s: expand_query_node(s, config=config, llm=llm),
+        _wrap("expand_query", lambda s: expand_query_node(s, config=config, llm=llm)),
     )
     graph.add_node(
         "vector_search",
-        lambda s: vector_search_node(s, embedding_backend=embedding_backend, vector_store=vector_store),
+        _wrap("vector_search", lambda s: vector_search_node(s, embedding_backend=embedding_backend, vector_store=vector_store)),
     )
     graph.add_node(
         "rerank_results",
-        lambda s: rerank_results_node(s, config=config, llm=llm),
+        _wrap("rerank_results", lambda s: rerank_results_node(s, config=config, llm=llm)),
     )
-    graph.add_node("postprocess_results", lambda s: postprocess_results_node(s))
+    graph.add_node("postprocess_results", _wrap("postprocess_results", lambda s: postprocess_results_node(s)))
 
     graph.set_entry_point("analyze_query")
     graph.add_conditional_edges(
@@ -295,24 +327,47 @@ class _FallbackGraph:
         embedding_backend,
         vector_store,
         llm: BaseLLMBackend,
+        event_hub: Optional[EventHub] = None,
     ) -> None:
         self.config = config
         self.embedding_backend = embedding_backend
         self.vector_store = vector_store
         self.llm = llm
+        self.event_hub = event_hub
+
+    def _emit(self, event: Dict[str, Any]) -> None:
+        if self.event_hub is not None:
+            self.event_hub.publish(event)
 
     def invoke(self, state: SearchState) -> SearchState:
+        self._emit({"type": "query_received", "query": state.get("query") or ""})
         state = analyze_query_node(state, config=self.config)
         if self.config.langgraph.query_expansion:
             state = expand_query_node(state, config=self.config, llm=self.llm)
+            self._emit({
+                "type": "query_expanded",
+                "queries": list(state.get("expanded_queries") or []),
+            })
         state = vector_search_node(
             state,
             embedding_backend=self.embedding_backend,
             vector_store=self.vector_store,
         )
+        self._emit({
+            "type": "vector_search_completed",
+            "candidate_count": len(state.get("merged_results") or []),
+        })
         if self.config.langgraph.reranking:
             state = rerank_results_node(state, config=self.config, llm=self.llm)
+            self._emit({
+                "type": "rerank_completed",
+                "candidate_count": len(state.get("reranked_results") or []),
+            })
         state = postprocess_results_node(state)
+        self._emit({
+            "type": "completed",
+            "total": len(state.get("final_results") or []),
+        })
         return state
 
 

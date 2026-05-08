@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
+import threading
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from django.apps import apps
-from django.http import JsonResponse
+from django.http import JsonResponse, StreamingHttpResponse
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
+from .events import EventHub
 from .searcher import Searcher
 from .settings import get_settings
 
@@ -171,6 +174,136 @@ class ConversationalSearchAPIView(View):
 
         factory = import_string(cfg.conversational.followup_graph)
         return factory(cfg, searcher=searcher, memory=memory)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class StreamingSearchAPIView(View):
+    """Stream pipeline events back to the client as they happen.
+
+    The endpoint is opt-in: it returns HTTP 404 unless
+    ``GRAPH_SEARCH["STREAMING"]["ENABLED"]`` is true.
+
+    Two transports are supported:
+
+    * ``ndjson`` (default) — each line is a JSON object, easy to consume from
+      browsers via ``fetch`` + ``ReadableStream`` or from CLIs via ``jq``.
+    * ``sse`` — standards-compliant Server-Sent Events for ``EventSource``.
+
+    The handler runs the search in a worker thread so the event hub publishes
+    events while the request loop drains them. A terminal ``completed`` event
+    is always sent (even on error) so clients have a reliable end-of-stream
+    marker.
+    """
+
+    def get(self, request, *args, **kwargs):
+        return self._handle(request)
+
+    def post(self, request, *args, **kwargs):
+        return self._handle(request)
+
+    def _handle(self, request):
+        cfg = get_settings()
+        if not cfg.streaming.enabled:
+            return JsonResponse({"error": "Streaming search is disabled."}, status=404)
+
+        payload = self._extract_payload(request)
+        query = (payload.get("q") or payload.get("query") or "").strip()
+        if not query:
+            return JsonResponse({"error": "Parameter 'q' is required."}, status=400)
+        models = payload.get("models")
+        if isinstance(models, str):
+            models = [m.strip() for m in models.split(",") if m.strip()]
+        try:
+            limit = int(payload.get("limit")) if payload.get("limit") else None
+        except (TypeError, ValueError):
+            limit = None
+
+        hub = EventHub()
+        events_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
+        sentinel = object()
+        # Bridge hub -> queue so the request thread can drain it.
+        hub.subscribe(lambda evt: events_queue.put(evt))
+
+        searcher = Searcher(event_hub=hub) if cfg.langgraph.enabled else Searcher()
+
+        result_holder: Dict[str, Any] = {}
+
+        def _runner():
+            try:
+                result_holder["results"] = searcher.search(
+                    query, models=models, limit=limit
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.exception("Streaming search failed: %s", exc)
+                result_holder["error"] = str(exc)
+                hub.publish({"type": "error", "message": str(exc)})
+            finally:
+                events_queue.put(sentinel)
+
+        worker = threading.Thread(target=_runner, daemon=True)
+        worker.start()
+
+        fmt = cfg.streaming.format
+
+        def _generate() -> Iterable[bytes]:
+            yield _format_event(
+                {"type": "query_received", "query": query}, fmt
+            )
+            while True:
+                event = events_queue.get()
+                if event is sentinel:
+                    break
+                # Drop internal events when configured to do so (final event
+                # is still emitted below).
+                if (
+                    not cfg.streaming.include_internal_events
+                    and event.get("type") not in {"query_received", "completed", "error"}
+                ):
+                    continue
+                yield _format_event(event, fmt)
+
+            # Wait briefly for the worker to publish its return value if it
+            # has not already done so.
+            worker.join(timeout=0.1)
+            final = {
+                "type": "results",
+                "results": result_holder.get("results") or [],
+                "total": len(result_holder.get("results") or []),
+            }
+            yield _format_event(final, fmt)
+            yield _format_event({"type": "end"}, fmt)
+
+        content_type = (
+            "text/event-stream"
+            if fmt == "sse"
+            else "application/x-ndjson"
+        )
+        response = StreamingHttpResponse(_generate(), content_type=content_type)
+        # Disable proxy buffering so events arrive as soon as they are emitted.
+        response["Cache-Control"] = "no-cache"
+        response["X-Accel-Buffering"] = "no"
+        return response
+
+    @staticmethod
+    def _extract_payload(request) -> Dict[str, Any]:
+        if request.method == "POST" and request.body:
+            ctype = (request.META.get("CONTENT_TYPE") or "").split(";")[0].strip()
+            if ctype == "application/json":
+                try:
+                    return json.loads(request.body.decode("utf-8")) or {}
+                except (ValueError, UnicodeDecodeError):
+                    return {}
+        merged: Dict[str, Any] = {}
+        merged.update(request.POST.dict() if hasattr(request.POST, "dict") else {})
+        merged.update(request.GET.dict() if hasattr(request.GET, "dict") else {})
+        return merged
+
+
+def _format_event(event: Dict[str, Any], fmt: str) -> bytes:
+    payload = json.dumps(event, ensure_ascii=False, default=str)
+    if fmt == "sse":
+        return f"event: {event.get('type', 'message')}\ndata: {payload}\n\n".encode("utf-8")
+    return (payload + "\n").encode("utf-8")
 
 
 class SimilarAPIView(View):
