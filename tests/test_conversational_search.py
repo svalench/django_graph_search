@@ -1,4 +1,5 @@
 """Tests for the optional conversational search endpoint and graph."""
+# pylint: disable=redefined-outer-name
 from __future__ import annotations
 
 import json
@@ -89,7 +90,7 @@ def test_in_memory_backend_clear_history():
     backend = InMemoryBackend(max_history_items=5)
     backend.append_event("s1", ConversationEvent(role="user", query="q"))
     backend.clear_history("s1")
-    assert backend.get_history("s1") == []
+    assert not backend.get_history("s1")
 
 
 def test_factory_returns_in_memory_for_alias():
@@ -225,7 +226,7 @@ def test_graph_returns_clarification_for_ambiguous_short_input(graph_search_sett
     assert out["clarification_needed"] is True
     assert out["results"] == []
     # Search should not have been invoked.
-    assert searcher.calls == []
+    assert not searcher.calls
 
 
 # ---------------------------------------------------------------------------

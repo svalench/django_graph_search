@@ -8,7 +8,8 @@ when the follow-up query is too ambiguous.
 Pipeline:
 
 ```
-load_context \u2192 interpret_followup \u2192 maybe_clarify \u2192 [execute_search] \u2192 store_context
+load_context \u2192 interpret_followup \u2192 maybe_clarify
+  \u2192 [execute_search] \u2192 store_context
 ```
 
 * ``load_context`` reads the recent history from the memory backend.

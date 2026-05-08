@@ -5,6 +5,7 @@ they exercise the in-tree fallback runner. They also verify that switching
 ``LANGGRAPH.ENABLED`` does not change observable behaviour for the simple
 single-query case (Sprint 1 backwards-compat guarantee).
 """
+# pylint: disable=redefined-outer-name
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -182,7 +183,6 @@ def test_expand_query_node_falls_back_on_llm_failure():
 
 
 def test_vector_search_node_merges_and_dedupes():
-    cfg = _make_config(langgraph=LangGraphConfig(enabled=True))
     embed = StubEmbeddingBackend(["a", "b"])
     store = StubVectorStore({
         "a": [
@@ -212,7 +212,6 @@ def test_vector_search_node_merges_and_dedupes():
 
 
 def test_vector_search_node_filters_by_models():
-    cfg = _make_config(langgraph=LangGraphConfig(enabled=True))
     embed = StubEmbeddingBackend(["q"])
     store = StubVectorStore({
         "q": [

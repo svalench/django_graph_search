@@ -1,4 +1,5 @@
 """Tests for the event hub and the streaming search endpoint (Sprint 4)."""
+# pylint: disable=redefined-outer-name
 from __future__ import annotations
 
 import json

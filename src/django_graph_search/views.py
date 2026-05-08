@@ -222,7 +222,7 @@ class StreamingSearchAPIView(View):
         events_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
         sentinel = object()
         # Bridge hub -> queue so the request thread can drain it.
-        hub.subscribe(lambda evt: events_queue.put(evt))
+        hub.subscribe(events_queue.put)
 
         searcher = Searcher(event_hub=hub) if cfg.langgraph.enabled else Searcher()
 

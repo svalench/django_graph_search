@@ -194,7 +194,6 @@ def persist_node(
 ) -> Dict[str, Any]:
     documents = state["documents"]
     embeddings = state["embeddings"]
-    cfg: ModelConfig = state["model_config"]
     payload: List[Document] = []
     for doc, embedding in zip(documents, embeddings):
         instance: models.Model = doc["instance"]
@@ -280,7 +279,7 @@ class SmartIndexer(ComponentMixin):
                 out[key] = DocumentTemplate.from_dict(value)
             else:
                 raise TypeError(
-                    "Templates must be DocumentTemplate or dict, got %r" % type(value)
+                    f"Templates must be DocumentTemplate or dict, got {type(value)!r}"
                 )
         return out
 
