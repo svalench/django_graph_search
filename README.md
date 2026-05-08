@@ -164,6 +164,8 @@ similar = get_similar(product_instance, limit=5)
 |---|---|---|
 | `/api/search/?q=...&models=...&limit=...` | `GET` | Semantic full-text search |
 | `/api/search/similar/{app}.{Model}/{id}/` | `GET` | Find similar objects |
+| `/api/search/conversation/` | `POST` | Session-aware conversational search (optional, see below) |
+| `/api/search/conversation/?conversation_id=...` | `DELETE` | Clear a conversation history |
 
 ## Management Commands
 
@@ -195,6 +197,116 @@ Enable `DELTA_INDEXING: True` to skip objects that haven’t changed since last 
 | `file` | `OPTIONS.path` | Local dev |
 | `redis` | `OPTIONS.alias` | Production |
 | `db` | `OPTIONS.alias` | Simple setup |
+
+## LangGraph-powered search pipeline (optional)
+
+Starting with this version, `django-graph-search` ships with an **optional**
+orchestration layer built on top of [LangGraph](https://langchain-ai.github.io/langgraph/).
+It is disabled by default; the public API (`Searcher.search`,
+`Searcher.find_similar`, REST endpoints) is fully backwards-compatible.
+
+When enabled, the pipeline runs as a small graph:
+
+```
+analyze_query → [expand_query] → vector_search → [rerank] → postprocess
+```
+
+Steps in `[brackets]` are toggled via settings, and each one degrades
+gracefully: if the LLM backend fails or is not configured, the pipeline keeps
+working using the deterministic vector search.
+
+```python
+GRAPH_SEARCH = {
+    # ... your existing config ...
+    "LANGGRAPH": {
+        "ENABLED": True,                # Master switch.
+        "QUERY_EXPANSION": True,        # Generate semantic reformulations.
+        "RERANKING": True,              # Rerank top-K candidates.
+        "MAX_EXPANDED_QUERIES": 3,
+        "RERANK_TOP_K": 20,
+        "TIMEOUT_SECONDS": 15,
+        "MAX_QUERY_LENGTH": 1024,
+        "FALLBACK_ON_ERROR": True,      # Fall back to legacy search on graph errors.
+        "USE_FOR_SIMILAR": False,       # Route find_similar through the graph.
+        "LLM": {
+            # Leave BACKEND=None to use the deterministic dummy backend.
+            "BACKEND": None,
+            "MODEL": None,
+            "OPTIONS": {},
+        },
+    },
+}
+```
+
+### Bring your own LLM backend
+
+Implement `django_graph_search.llm.BaseLLMBackend` and point
+`LANGGRAPH.LLM.BACKEND` at the dotted path. The contract is intentionally
+tiny — `expand_query(query, models, max_variants)` and
+`rerank(query, candidates, top_k)` — so you can wrap any provider
+(OpenAI, Ollama, vLLM, your in-house service) in a few lines.
+
+### Why optional?
+
+The library refuses to add hard dependencies on `langgraph` or any LLM SDK.
+If `langgraph` is not installed, the pipeline transparently uses an in-tree
+sequential runner with the same node structure, so behaviour and tests stay
+identical.
+
+## Conversational search (optional)
+
+For session-aware semantic search (follow-ups like "more", "only products",
+"similar") enable the conversational endpoint. It is a thin search-first
+shell on top of `Searcher` and never invents user intent: ambiguous
+follow-ups are surfaced as a structured `clarification_needed` flag instead
+of a hallucinated query.
+
+```python
+GRAPH_SEARCH = {
+    # ... existing config ...
+    "CONVERSATIONAL": {
+        "ENABLED": True,
+        "MEMORY_BACKEND": "inmemory",   # or "cache" / dotted path.
+        "MAX_HISTORY_ITEMS": 10,
+        "ALLOW_CLARIFICATIONS": True,
+    },
+}
+```
+
+Endpoint: `POST /api/search/conversation/`
+
+```json
+// Request
+{
+  "query": "only products",
+  "conversation_id": "abc-123",
+  "models": ["shop.Product"],
+  "limit": 5
+}
+
+// Response
+{
+  "conversation_id": "abc-123",
+  "query": "only products",
+  "interpreted_query": "red phone",
+  "clarification_needed": false,
+  "results": [...],
+  "total": 5
+}
+```
+
+Use `DELETE /api/search/conversation/?conversation_id=abc-123` to clear a
+conversation.
+
+Built-in memory backends:
+
+| Alias | Class | Best for |
+|---|---|---|
+| `inmemory` | `InMemoryBackend` | Tests, single-worker dev |
+| `cache` / `redis` | `DjangoCacheBackend` | Production via Django cache (Redis, memcached) |
+
+Bring your own by subclassing `BaseMemoryBackend` and pointing
+`MEMORY_BACKEND` at the dotted path.
 
 ## Comparison
 
