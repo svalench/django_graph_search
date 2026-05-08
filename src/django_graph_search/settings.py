@@ -62,6 +62,16 @@ DEFAULTS: Dict[str, Any] = {
         "MIN_QUERY_LENGTH_FOR_AUTOSEARCH": 2,
         "FOLLOWUP_GRAPH": "django_graph_search.langgraph_conversation.build_conversation_graph",
     },
+    "SMART_INDEXING": {
+        "ENABLED": False,
+        "INDEXER": "django_graph_search.langgraph_indexer.SmartIndexer",
+        "TEMPLATES": {},
+    },
+    "STREAMING": {
+        "ENABLED": False,
+        "FORMAT": "ndjson",  # "ndjson" or "sse"
+        "INCLUDE_INTERNAL_EVENTS": True,
+    },
 }
 
 
@@ -118,6 +128,20 @@ class LangGraphConfig:
 
 
 @dataclass(frozen=True)
+class SmartIndexingConfig:
+    enabled: bool = False
+    indexer: str = "django_graph_search.langgraph_indexer.SmartIndexer"
+    templates: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class StreamingConfig:
+    enabled: bool = False
+    format: str = "ndjson"
+    include_internal_events: bool = True
+
+
+@dataclass(frozen=True)
 class ConversationalConfig:
     enabled: bool = False
     memory_backend: str = "inmemory"
@@ -142,6 +166,8 @@ class GraphSearchConfig:
     cache: CacheConfig
     langgraph: LangGraphConfig = field(default_factory=LangGraphConfig)
     conversational: ConversationalConfig = field(default_factory=ConversationalConfig)
+    smart_indexing: SmartIndexingConfig = field(default_factory=SmartIndexingConfig)
+    streaming: StreamingConfig = field(default_factory=StreamingConfig)
 
 
 def _merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -234,6 +260,8 @@ def get_settings() -> GraphSearchConfig:
 
     langgraph_cfg = _build_langgraph_config(merged.get("LANGGRAPH") or {})
     conversational_cfg = _build_conversational_config(merged.get("CONVERSATIONAL") or {})
+    smart_indexing_cfg = _build_smart_indexing_config(merged.get("SMART_INDEXING") or {})
+    streaming_cfg = _build_streaming_config(merged.get("STREAMING") or {})
 
     # Validate backend paths early
     _load_backend(vector_store.backend)
@@ -253,6 +281,8 @@ def get_settings() -> GraphSearchConfig:
         cache=cache_cfg,
         langgraph=langgraph_cfg,
         conversational=conversational_cfg,
+        smart_indexing=smart_indexing_cfg,
+        streaming=streaming_cfg,
     )
 
 
@@ -294,6 +324,39 @@ def _build_langgraph_config(payload: Dict[str, Any]) -> LangGraphConfig:
         max_query_length=max_query_length,
         fallback_on_error=bool(merged.get("FALLBACK_ON_ERROR", True)),
         llm=llm_cfg,
+    )
+
+
+def _build_smart_indexing_config(payload: Dict[str, Any]) -> SmartIndexingConfig:
+    if not isinstance(payload, dict):
+        raise ConfigurationError("SMART_INDEXING must be a dict.")
+    defaults = DEFAULTS["SMART_INDEXING"]
+    merged = _merge_dicts(defaults, payload)
+    templates = merged.get("TEMPLATES") or {}
+    if not isinstance(templates, dict):
+        raise ConfigurationError("SMART_INDEXING.TEMPLATES must be a dict.")
+    indexer_path = merged.get("INDEXER") or "django_graph_search.langgraph_indexer.SmartIndexer"
+    if not isinstance(indexer_path, str):
+        raise ConfigurationError("SMART_INDEXING.INDEXER must be a dotted-path string.")
+    return SmartIndexingConfig(
+        enabled=bool(merged.get("ENABLED", False)),
+        indexer=indexer_path,
+        templates=templates,
+    )
+
+
+def _build_streaming_config(payload: Dict[str, Any]) -> StreamingConfig:
+    if not isinstance(payload, dict):
+        raise ConfigurationError("STREAMING must be a dict.")
+    defaults = DEFAULTS["STREAMING"]
+    merged = _merge_dicts(defaults, payload)
+    fmt = str(merged.get("FORMAT") or "ndjson").lower()
+    if fmt not in {"ndjson", "sse"}:
+        raise ConfigurationError("STREAMING.FORMAT must be 'ndjson' or 'sse'.")
+    return StreamingConfig(
+        enabled=bool(merged.get("ENABLED", False)),
+        format=fmt,
+        include_internal_events=bool(merged.get("INCLUDE_INTERNAL_EVENTS", True)),
     )
 
 

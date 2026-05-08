@@ -19,6 +19,32 @@ def make_doc_id(model_label: str, pk: object) -> str:
     return f"{model_label}:{pk}"
 
 
+def get_indexer(
+    config: Optional[GraphSearchConfig] = None,
+    **kwargs,
+):
+    """Return the configured indexer instance.
+
+    By default returns :class:`Indexer`. When
+    ``GRAPH_SEARCH["SMART_INDEXING"]["ENABLED"]`` is ``True`` the dotted-path
+    in ``SMART_INDEXING.INDEXER`` is loaded instead — typically
+    :class:`~django_graph_search.langgraph_indexer.SmartIndexer`.
+
+    The factory keeps the public surface stable: callers do not need to know
+    which implementation they are using because both expose the same methods
+    (``index_queryset``, ``index_instance``, ``delete_instance``,
+    ``rebuild_all``).
+    """
+    from .settings import get_settings
+    from django.utils.module_loading import import_string
+
+    cfg = config or get_settings()
+    if not cfg.smart_indexing.enabled:
+        return Indexer(config=cfg, **kwargs)
+    indexer_cls = import_string(cfg.smart_indexing.indexer)
+    return indexer_cls(config=cfg, **kwargs)
+
+
 class Indexer(ComponentMixin):
     def __init__(
         self,

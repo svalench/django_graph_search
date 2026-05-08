@@ -1,6 +1,7 @@
+from django.apps import apps
 from django.core.management.base import BaseCommand
 
-from ...indexer import Indexer
+from ...indexer import get_indexer
 from ...settings import get_settings
 
 
@@ -13,7 +14,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         config = get_settings()
         model_label = options.get("model")
-        indexer = Indexer(config=config)
+        indexer = get_indexer(config=config)
 
         if model_label:
             model_cfgs = [cfg for cfg in config.models if cfg.model == model_label]
@@ -25,7 +26,8 @@ class Command(BaseCommand):
 
         result = {}
         for cfg in model_cfgs:
-            model_cls = indexer._get_model_class(cfg.model)
+            app_label, model_name = cfg.model.split(".", 1)
+            model_cls = apps.get_model(app_label, model_name)
             count = indexer.index_queryset(model_cls.objects.all(), cfg)
             result[cfg.model] = count
 

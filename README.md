@@ -308,6 +308,97 @@ Built-in memory backends:
 Bring your own by subclassing `BaseMemoryBackend` and pointing
 `MEMORY_BACKEND` at the dotted path.
 
+## Smart indexing (optional)
+
+The classic indexer joins selected fields with whitespace. That works, but the
+embedding model loses the *role* of each value: a category name and a body
+paragraph become indistinguishable tokens. The optional `SmartIndexer` builds
+structured documents with labelled sections so the embedder sees something
+closer to:
+
+```
+Title: Pixel 8
+Description:
+Camera-first Android phone with Tensor G3.
+Category: Phones
+```
+
+Enable it from settings — your existing index, signals, and management command
+keep working because the resolver and `get_indexer()` factory pick the new
+implementation transparently:
+
+```python
+GRAPH_SEARCH = {
+    # ... your existing config ...
+    "SMART_INDEXING": {
+        "ENABLED": True,
+        # Optional per-model templates; the indexer falls back to a heuristic
+        # template based on your MODELS config when one is missing.
+        "TEMPLATES": {
+            "shop.Product": {
+                "title_field": "name",
+                "sections": [
+                    {"label": "Description", "field": "description", "multiline": True},
+                    {"label": "Category", "field": "category__name"},
+                ],
+            }
+        },
+    },
+}
+```
+
+The original deterministic text is always appended as a safety net so smart
+indexing never produces *less* searchable content than the legacy pipeline.
+Disable the flag to fall back instantly — no reindex required to switch back.
+
+## Streaming search endpoint (optional)
+
+Long-running pipelines (query expansion, vector search, reranking) can stream
+lifecycle events to the client so users see progress instead of staring at a
+spinner. Two transports are supported:
+
+- `ndjson` (default): one JSON object per line, ideal for `fetch` +
+  `ReadableStream` and CLI tools like `jq`.
+- `sse`: Server-Sent Events for `EventSource` clients.
+
+Enable from settings:
+
+```python
+GRAPH_SEARCH = {
+    # ... your existing config ...
+    "STREAMING": {
+        "ENABLED": True,
+        "FORMAT": "ndjson",  # or "sse"
+        "INCLUDE_INTERNAL_EVENTS": True,
+    },
+}
+```
+
+The endpoint is registered at `/<API_URL_PREFIX>/stream/` (default
+`/api/search/stream/`) and returns HTTP 404 when disabled, so it is safe to
+leave the URL config untouched.
+
+Quick test:
+
+```bash
+curl -N "http://localhost:8000/api/search/stream/?q=phone"
+```
+
+Example event sequence (NDJSON):
+
+```json
+{"type": "query_received", "query": "phone"}
+{"type": "vector_search_completed", "candidate_count": 12}
+{"type": "completed", "total": 5}
+{"type": "results", "results": [...], "total": 5}
+{"type": "end"}
+```
+
+Under the hood the view subscribes a `queue.Queue` to a per-request
+`EventHub`, runs the search in a worker thread, and yields events as soon as
+the nodes publish them. The hub also powers structured logging and any
+custom subscribers you register from your own apps.
+
 ## Comparison
 
 | Feature | django-graph-search | Haystack | django-elasticsearch-dsl |

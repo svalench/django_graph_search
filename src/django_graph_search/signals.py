@@ -3,7 +3,7 @@ from __future__ import annotations
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
-from .indexer import Indexer
+from .indexer import get_indexer
 from .settings import get_settings
 
 
@@ -23,7 +23,7 @@ def on_model_save(sender, instance, **kwargs):
     model_cfg = _get_model_config(instance._meta.label)
     if model_cfg is None:
         return
-    indexer = Indexer(config=config)
+    indexer = get_indexer(config=config)
     indexer.index_instance(instance, model_cfg)
 
 
@@ -35,6 +35,6 @@ def on_model_delete(sender, instance, **kwargs):
     model_cfg = _get_model_config(instance._meta.label)
     if model_cfg is None:
         return
-    indexer = Indexer(config=config)
+    indexer = get_indexer(config=config)
     indexer.delete_instance(instance._meta.label, instance.pk)
 
