@@ -1,6 +1,12 @@
 [MASTER]
 ignore=build,dist,.venv,venv
 
+[TYPECHECK]
+# Django models are dynamically populated; pylint can't see managers/managers' methods
+# without django-pylint plugin. Suppress the predictable false positives.
+generated-members=objects,DoesNotExist,_meta
+ignored-classes=django.core.management.color.Style
+
 [MESSAGES CONTROL]
 disable=
     import-error,
@@ -20,5 +26,6 @@ disable=
     duplicate-code,
     trailing-newlines,
     import-outside-toplevel,
-    relative-beyond-top-level
+    relative-beyond-top-level,
+    invalid-str-returned
 

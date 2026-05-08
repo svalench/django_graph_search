@@ -9,6 +9,7 @@ from django.apps import apps
 from django.urls import reverse
 
 from .components import ComponentMixin
+from .events import EventHub
 from .graph_resolver import GraphResolver
 from .llm import BaseLLMBackend, build_llm_backend
 from .settings import GraphSearchConfig, ModelConfig, get_settings
@@ -35,6 +36,7 @@ class Searcher(ComponentMixin):
         resolver: Optional[GraphResolver] = None,
         embedding_profile: Optional[str] = None,
         llm_backend: Optional[BaseLLMBackend] = None,
+        event_hub: Optional[EventHub] = None,
     ) -> None:
         self._init_components(
             config=config,
@@ -44,6 +46,7 @@ class Searcher(ComponentMixin):
             embedding_profile=embedding_profile,
         )
         self._llm_backend = llm_backend
+        self._event_hub = event_hub
         self._compiled_graph = None  # Lazy.
 
     # ------------------------------------------------------------------ public
@@ -139,12 +142,22 @@ class Searcher(ComponentMixin):
 
         factory = resolve_graph_factory(self.config.langgraph.search_graph)
         llm = self._llm_backend or build_llm_backend(self.config.langgraph.llm)
-        self._compiled_graph = factory(
-            self.config,
-            embedding_backend=self.embedding_backend,
-            vector_store=self.vector_store,
-            llm=llm,
-        )
+        # Forward ``event_hub`` only when the factory accepts it so custom
+        # graphs without that parameter keep working.
+        kwargs = {
+            "embedding_backend": self.embedding_backend,
+            "vector_store": self.vector_store,
+            "llm": llm,
+        }
+        if self._event_hub is not None:
+            try:
+                self._compiled_graph = factory(
+                    self.config, event_hub=self._event_hub, **kwargs
+                )
+                return self._compiled_graph
+            except TypeError:
+                log.debug("Search graph factory does not accept event_hub; skipping.")
+        self._compiled_graph = factory(self.config, **kwargs)
         return self._compiled_graph
 
     # --------------------------------------------------------------- helpers
