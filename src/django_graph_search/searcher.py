@@ -2,16 +2,31 @@ from __future__ import annotations
 
 # pylint: disable=duplicate-code
 
+import logging
 from typing import Iterable, List, Optional
 
 from django.apps import apps
 from django.urls import reverse
+
 from .components import ComponentMixin
 from .graph_resolver import GraphResolver
+from .llm import BaseLLMBackend, build_llm_backend
 from .settings import GraphSearchConfig, ModelConfig, get_settings
+
+log = logging.getLogger(__name__)
 
 
 class Searcher(ComponentMixin):
+    """High-level search facade.
+
+    The public API (:meth:`search`, :meth:`find_similar`) is unchanged. When
+    ``GRAPH_SEARCH["LANGGRAPH"]["ENABLED"]`` is true the call is routed
+    through the LangGraph orchestrator defined in
+    :mod:`django_graph_search.langgraph_agent`; otherwise it follows the
+    original linear path. Either way the returned shape is identical so
+    callers do not need to know which path executed.
+    """
+
     def __init__(
         self,
         config: Optional[GraphSearchConfig] = None,
@@ -19,6 +34,7 @@ class Searcher(ComponentMixin):
         embedding_backend=None,
         resolver: Optional[GraphResolver] = None,
         embedding_profile: Optional[str] = None,
+        llm_backend: Optional[BaseLLMBackend] = None,
     ) -> None:
         self._init_components(
             config=config,
@@ -27,6 +43,10 @@ class Searcher(ComponentMixin):
             resolver=resolver,
             embedding_profile=embedding_profile,
         )
+        self._llm_backend = llm_backend
+        self._compiled_graph = None  # Lazy.
+
+    # ------------------------------------------------------------------ public
 
     def search(
         self,
@@ -35,13 +55,15 @@ class Searcher(ComponentMixin):
         limit: Optional[int] = None,
     ) -> List[dict]:
         limit = limit or self.config.default_results_limit
-        query_vector = self.embedding_backend.embed(query)
-        filters = None
-        results = self.vector_store.search(query_vector, limit=limit, filters=filters)
-        if models:
-            allowed = set(models)
-            results = [item for item in results if item.metadata.get("model") in allowed]
-        return [self._format_result(item) for item in results]
+        model_list = list(models) if models else None
+        if self.config.langgraph.enabled:
+            try:
+                return self._search_via_graph(query, models=model_list, limit=limit)
+            except Exception as exc:  # noqa: BLE001
+                if not self.config.langgraph.fallback_on_error:
+                    raise
+                log.warning("LangGraph search failed, falling back to linear path: %s", exc)
+        return self._search_linear(query, models=model_list, limit=limit)
 
     def find_similar(
         self,
@@ -51,6 +73,20 @@ class Searcher(ComponentMixin):
         limit = limit or self.config.default_results_limit
         model_cfg = self._find_model_config(instance._meta.label)
         text = self.resolver.build_searchable_text(instance, model_cfg)
+        # Reuse the same graph if requested; otherwise stay on the linear path
+        # because instance-level similarity has historically been simpler.
+        if self.config.langgraph.enabled and self.config.langgraph.use_for_similar:
+            try:
+                return self._search_via_graph(
+                    text,
+                    models=[instance._meta.label],
+                    limit=limit,
+                )
+            except Exception as exc:  # noqa: BLE001
+                if not self.config.langgraph.fallback_on_error:
+                    raise
+                log.warning("LangGraph find_similar failed, falling back: %s", exc)
+
         query_vector = self.embedding_backend.embed(text)
         results = self.vector_store.search(
             query_vector,
@@ -58,6 +94,60 @@ class Searcher(ComponentMixin):
             filters={"model": instance._meta.label},
         )
         return [self._format_result(item) for item in results]
+
+    # ----------------------------------------------------------- legacy path
+
+    def _search_linear(
+        self,
+        query: str,
+        *,
+        models: Optional[List[str]],
+        limit: int,
+    ) -> List[dict]:
+        """Original deterministic search path. Kept for backwards compatibility."""
+        query_vector = self.embedding_backend.embed(query)
+        results = self.vector_store.search(query_vector, limit=limit, filters=None)
+        if models:
+            allowed = set(models)
+            results = [item for item in results if item.metadata.get("model") in allowed]
+        return [self._format_result(item) for item in results]
+
+    # ---------------------------------------------------------- LangGraph path
+
+    def _search_via_graph(
+        self,
+        query: str,
+        *,
+        models: Optional[List[str]],
+        limit: int,
+    ) -> List[dict]:
+        graph = self._get_or_build_graph()
+        state = {
+            "query": query,
+            "models": models,
+            "limit": limit,
+            "rerank_top_k": self.config.langgraph.rerank_top_k,
+        }
+        out = graph.invoke(state)
+        results = out.get("final_results") or []
+        return [self._format_result(item) for item in results]
+
+    def _get_or_build_graph(self):
+        if self._compiled_graph is not None:
+            return self._compiled_graph
+        from .langgraph_agent import resolve_graph_factory
+
+        factory = resolve_graph_factory(self.config.langgraph.search_graph)
+        llm = self._llm_backend or build_llm_backend(self.config.langgraph.llm)
+        self._compiled_graph = factory(
+            self.config,
+            embedding_backend=self.embedding_backend,
+            vector_store=self.vector_store,
+            llm=llm,
+        )
+        return self._compiled_graph
+
+    # --------------------------------------------------------------- helpers
 
     def _format_result(self, item) -> dict:
         model_label = item.metadata.get("model")
@@ -92,7 +182,6 @@ class Searcher(ComponentMixin):
         for cfg in self.config.models:
             if cfg.model == model_label:
                 return cfg
-        # Fallback: minimal config
         return ModelConfig(model=model_label, fields=[], follow_relations=True)
 
     def _get_model_class(self, model_label: str):
@@ -100,4 +189,3 @@ class Searcher(ComponentMixin):
             return apps.get_model(model_label)
         app_label, model_name = model_label.split(".", 1)
         return apps.get_model(app_label, model_name)
-
