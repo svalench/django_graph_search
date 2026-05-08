@@ -59,7 +59,7 @@ _default_lock = threading.Lock()
 
 
 def get_default_hub() -> EventHub:
-    global _default_hub
+    global _default_hub  # pylint: disable=global-statement
     if _default_hub is None:
         with _default_lock:
             if _default_hub is None:
@@ -68,7 +68,7 @@ def get_default_hub() -> EventHub:
 
 
 def reset_default_hub() -> None:  # pragma: no cover - testing helper
-    global _default_hub
+    global _default_hub  # pylint: disable=global-statement
     _default_hub = EventHub()
 
 

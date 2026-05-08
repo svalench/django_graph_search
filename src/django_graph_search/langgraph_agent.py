@@ -267,31 +267,45 @@ def build_search_graph(
             return fn
 
         def _wrapped(s):
-            event_hub.publish({"type": f"{name}_started", "query": s.get("normalized_query") or s.get("query")})
+            event_hub.publish({
+                "type": f"{name}_started",
+                "query": s.get("normalized_query") or s.get("query"),
+            })
             out = fn(s)
+            candidates = out.get("merged_results") or out.get("raw_results") or []
             event_hub.publish({
                 "type": f"{name}_completed",
-                "candidate_count": len(out.get("merged_results") or out.get("raw_results") or []),
+                "candidate_count": len(candidates),
             })
             return out
 
         return _wrapped
 
     graph: Any = StateGraph(dict)
-    graph.add_node("analyze_query", _wrap("analyze_query", lambda s: analyze_query_node(s, config=config)))
+    graph.add_node(
+        "analyze_query",
+        _wrap("analyze_query", lambda s: analyze_query_node(s, config=config)),
+    )
     graph.add_node(
         "expand_query",
         _wrap("expand_query", lambda s: expand_query_node(s, config=config, llm=llm)),
     )
     graph.add_node(
         "vector_search",
-        _wrap("vector_search", lambda s: vector_search_node(s, embedding_backend=embedding_backend, vector_store=vector_store)),
+        _wrap(
+            "vector_search",
+            lambda s: vector_search_node(
+                s,
+                embedding_backend=embedding_backend,
+                vector_store=vector_store,
+            ),
+        ),
     )
     graph.add_node(
         "rerank_results",
         _wrap("rerank_results", lambda s: rerank_results_node(s, config=config, llm=llm)),
     )
-    graph.add_node("postprocess_results", _wrap("postprocess_results", lambda s: postprocess_results_node(s)))
+    graph.add_node("postprocess_results", _wrap("postprocess_results", postprocess_results_node))
 
     graph.set_entry_point("analyze_query")
     graph.add_conditional_edges(
