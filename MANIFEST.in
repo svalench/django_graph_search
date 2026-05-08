@@ -1,5 +1,6 @@
 include README.md
 include LICENSE
+include CHANGELOG.md
 recursive-include src/django_graph_search/templates *.html
 recursive-include src/django_graph_search/static *.*
 
