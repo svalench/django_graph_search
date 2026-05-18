@@ -11,6 +11,7 @@ class ChromaDBBackend(BaseVectorStore):
         self,
         persist_directory: Optional[str] = None,
         collection_name: str = "django_graph_search",
+        distance_metric: str = "cosine",
         **options: Any,
     ) -> None:
         try:
@@ -18,12 +19,20 @@ class ChromaDBBackend(BaseVectorStore):
         except Exception as exc:  # pragma: no cover - dependency error
             raise BackendError("chromadb is not installed.") from exc
 
+        self.distance_metric = (distance_metric or "cosine").lower()
         if persist_directory:
             client = chromadb.PersistentClient(path=persist_directory, **options)
         else:
             client = chromadb.Client(**options)
 
-        self.collection = client.get_or_create_collection(name=collection_name)
+        collection_metadata = None
+        if self.distance_metric == "cosine":
+            collection_metadata = {"hnsw:space": "cosine"}
+
+        self.collection = client.get_or_create_collection(
+            name=collection_name,
+            metadata=collection_metadata,
+        )
 
     def add_documents(self, documents: Iterable[Document]) -> None:
         docs = list(documents)
@@ -50,11 +59,27 @@ class ChromaDBBackend(BaseVectorStore):
         ids = response.get("ids", [[]])[0]
         distances = response.get("distances", [[]])[0]
         metadatas = response.get("metadatas", [[]])[0]
+        documents = response.get("documents", [[]])[0]
         results = []
-        for doc_id, distance, metadata in zip(ids, distances, metadatas):
-            score = float(distance) if distance is not None else 0.0
-            results.append(SearchResult(id=doc_id, score=score, metadata=metadata or {}))
+        for doc_id, distance, metadata, doc_text in zip(
+            ids, distances, metadatas, documents
+        ):
+            meta = dict(metadata or {})
+            if doc_text and "text" not in meta:
+                meta["text"] = doc_text
+            score = self._distance_to_similarity(distance)
+            results.append(SearchResult(id=doc_id, score=score, metadata=meta))
         return results
+
+    def _distance_to_similarity(self, distance: Any) -> float:
+        """Привести метрику Chroma к сходству в диапазоне [0, 1]."""
+        if distance is None:
+            return 0.0
+        d = float(distance)
+        if self.distance_metric == "cosine":
+            return max(0.0, min(1.0, 1.0 - d))
+        # l2 и прочее: монотонное сжатие дистанции в (0, 1]
+        return max(0.0, min(1.0, 1.0 / (1.0 + d)))
 
     def delete(self, doc_ids: Iterable[str]) -> None:
         ids = list(doc_ids)

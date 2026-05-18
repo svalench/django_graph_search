@@ -21,7 +21,7 @@ Design goals:
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, TypedDict
+from typing import Any, Callable, Dict, List, Optional, TypedDict
 
 from .events import EventHub
 from .llm.base import BaseLLMBackend, RerankCandidate
@@ -135,7 +135,7 @@ def vector_search_node(
     merged: Dict[str, Any] = {}
     for q in queries:
         try:
-            vec = embedding_backend.embed(q)
+            vec = embedding_backend.embed(q, is_query=True)
             hits = vector_store.search(vec, limit=limit, filters=None)
         except Exception as exc:  # noqa: BLE001
             log.warning("Vector search failed for query=%r: %s", q, exc)

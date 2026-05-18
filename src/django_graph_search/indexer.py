@@ -116,7 +116,7 @@ class Indexer(ComponentMixin):
             return 0
 
         texts = [item[1] for item in prepared]
-        embeddings = self.embedding_backend.embed_batch(texts)
+        embeddings = self.embedding_backend.embed_batch(texts, is_query=False)
         documents: List[Document] = []
         for (instance, text, text_hash), embedding in zip(prepared, embeddings):
             model_label = instance._meta.label
@@ -125,7 +125,11 @@ class Indexer(ComponentMixin):
                 Document(
                     id=doc_id,
                     embedding=embedding,
-                    metadata={"model": model_label, "pk": instance.pk},
+                    metadata={
+                        "model": model_label,
+                        "pk": instance.pk,
+                        "text": text,
+                    },
                     text=text,
                 )
             )

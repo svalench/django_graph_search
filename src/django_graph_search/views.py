@@ -2,44 +2,277 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import queue
 import threading
 import uuid
-from typing import Any, Dict, Iterable, List, Optional
+import warnings
+from typing import Any, Dict, Iterable, Optional, Tuple, Union
 
 from django.apps import apps
-from django.http import JsonResponse, StreamingHttpResponse
+from django.conf import settings as django_settings
+from django.http import HttpRequest, JsonResponse, StreamingHttpResponse
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
 from .events import EventHub
 from .searcher import Searcher
-from .settings import get_settings
+from .settings import GraphSearchConfig, get_settings
 
 log = logging.getLogger(__name__)
 
+# Реестр бэкендов памяти диалога: один экземпляр на процесс (in-memory не шарится между воркерами).
+_memory_backend_lock = threading.Lock()
+_memory_backend_registry: Dict[Tuple[Any, ...], Any] = {}
 
-class SearchAPIView(View):
-    def get(self, request, *args, **kwargs):
+
+def _parse_int_param(
+    value: Optional[Union[str, int, float]],
+    param_name: str,
+    default: Optional[int] = None,
+    min_value: Optional[int] = 1,
+    max_value: Optional[int] = None,
+) -> Tuple[Optional[int], Optional[JsonResponse]]:
+    """
+    Safely parse an integer query or body parameter.
+
+    Args:
+        value: Raw string or numeric value from the client.
+        param_name: Name for error messages.
+        default: Used when value is None or empty string.
+        min_value: Minimum inclusive; None disables lower bound check.
+        max_value: Maximum inclusive; values above are clamped with a warning.
+
+    Returns:
+        A tuple ``(parsed, None)`` on success, or ``(None, JsonResponse)`` on failure.
+    """
+    coerced, err = _stringify_numeric_param(value, param_name)
+    if err is not None:
+        return None, err
+    if coerced is None:
+        return default, None
+    try:
+        parsed = int(coerced, 10)
+    except ValueError:
+        return None, JsonResponse(
+            {"error": f"'{param_name}' must be a positive integer."},
+            status=400,
+        )
+    if min_value is not None and parsed < min_value:
+        return None, JsonResponse(
+            {"error": f"'{param_name}' must be a positive integer."},
+            status=400,
+        )
+    if max_value is not None and parsed > max_value:
+        log.warning(
+            "Parameter %r=%s exceeds max_value=%s — clamping.",
+            param_name,
+            parsed,
+            max_value,
+        )
+        parsed = max_value
+    return parsed, None
+
+
+def _parse_float_param(
+    value: Optional[Union[str, int, float]],
+    param_name: str,
+    default: Optional[float] = None,
+    min_value: Optional[float] = None,
+    max_value: Optional[float] = None,
+) -> Tuple[Optional[float], Optional[JsonResponse]]:
+    """
+    Безопасно распарсить float из query/body (например ``min_score``).
+
+    Returns:
+        Кортеж ``(parsed, None)`` при успехе или ``(None, JsonResponse)`` при ошибке.
+    """
+    bad = JsonResponse(
+        {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
+        status=400,
+    )
+    out: Optional[float] = None
+    err: Optional[JsonResponse] = None
+
+    if value is None or value == "":
+        out = default
+    elif isinstance(value, bool):
+        err = bad
+    elif isinstance(value, (int, float)):
+        out = float(value)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            out = default
+        else:
+            try:
+                out = float(stripped)
+            except ValueError:
+                err = bad
+    else:
+        err = bad
+
+    if err is None and out is not None:
+        if math.isnan(out):
+            err = bad
+            out = None
+        elif min_value is not None and out < min_value:
+            err = bad
+            out = None
+        elif max_value is not None and out > max_value:
+            err = bad
+            out = None
+
+    return out, err
+
+
+def _stringify_numeric_param(
+    value: Optional[Union[str, int, float]],
+    param_name: str,
+) -> Tuple[Optional[str], Optional[JsonResponse]]:
+    """
+    Привести limit и подобные поля к строке цифр или вернуть ошибку 400.
+
+    Args:
+        value: Сырое значение из GET/JSON.
+        param_name: Имя параметра для сообщения об ошибке.
+
+    Returns:
+        ``(строка_цифр_или_None, None)`` либо ``(None, JsonResponse)``.
+    """
+    invalid = JsonResponse(
+        {"error": f"'{param_name}' must be a positive integer."},
+        status=400,
+    )
+    out: Optional[str] = None
+    err: Optional[JsonResponse] = None
+
+    if value is None or value == "":
+        pass
+    elif isinstance(value, bool):
+        err = invalid
+    elif isinstance(value, int):
+        out = str(value)
+    elif isinstance(value, float):
+        if not value.is_integer():
+            err = invalid
+        else:
+            out = str(int(value))
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            out = stripped
+    else:
+        err = invalid
+
+    return out, err
+
+
+class SearchPermissionMixin:
+    """Mixin that applies GRAPH_SEARCH.API permission and throttle checks."""
+
+    def _check_access(self, request: HttpRequest) -> Optional[JsonResponse]:
+        """
+        Enforce API permission and throttle configuration.
+
+        Returns:
+            ``None`` if the request may proceed, otherwise a ``JsonResponse`` error.
+        """
+        from .permissions import PermissionDenied, ThrottledError, check_permissions, check_throttle
+
+        cfg = get_settings()
+        try:
+            check_permissions(request, cfg)
+            check_throttle(request, cfg)
+        except PermissionDenied as exc:
+            return JsonResponse({"error": exc.detail}, status=exc.status_code)
+        except ThrottledError as exc:
+            return JsonResponse(
+                {"error": exc.detail},
+                status=429,
+                headers={"Retry-After": str(exc.retry_after)},
+            )
+        return None
+
+
+def _memory_backend_cache_key(cfg: GraphSearchConfig) -> Tuple[Any, ...]:
+    """Ключ реестра бэкендов памяти по настройкам conversational."""
+    return (
+        cfg.conversational.memory_backend,
+        tuple(sorted((cfg.conversational.memory_options or {}).items())),
+        cfg.conversational.max_history_items,
+    )
+
+
+def get_conversation_memory_backend(cfg: GraphSearchConfig) -> Any:
+    """
+    Вернуть singleton бэкенда памяти для конфигурации (один объект на процесс).
+
+    In-memory бэкенд пригоден только для одного процесса; для Gunicorn с несколькими
+    воркерами используйте MEMORY_BACKEND='redis' и Django CACHES.
+    """
+    from .memory import build_memory_backend
+
+    cache_key = _memory_backend_cache_key(cfg)
+    with _memory_backend_lock:
+        existing = _memory_backend_registry.get(cache_key)
+        if existing is not None:
+            return existing
+        backend = build_memory_backend(
+            cfg.conversational.memory_backend,
+            max_history_items=cfg.conversational.max_history_items,
+            options=cfg.conversational.memory_options,
+        )
+        _memory_backend_registry[cache_key] = backend
+        return backend
+
+
+class SearchAPIView(SearchPermissionMixin, View):
+    def get(self, request: HttpRequest, *args: Any, **kwargs: Any) -> JsonResponse:
+        denied = self._check_access(request)
+        if denied is not None:
+            return denied
         query = request.GET.get("q", "").strip()
         if not query:
             return JsonResponse({"error": "Parameter 'q' is required."}, status=400)
         models = request.GET.get("models")
         model_list = [m.strip() for m in models.split(",")] if models else None
-        limit = request.GET.get("limit")
-        limit_value = int(limit) if limit else None
+        limit_value, err = _parse_int_param(
+            request.GET.get("limit"),
+            "limit",
+            default=None,
+            min_value=1,
+            max_value=1000,
+        )
+        if err is not None:
+            return err
+        min_score, err = _parse_float_param(
+            request.GET.get("min_score"),
+            "min_score",
+            default=None,
+            min_value=0.0,
+            max_value=1.0,
+        )
+        if err is not None:
+            return err
 
         searcher = Searcher()
         results = searcher.search(query, models=model_list, limit=limit_value)
-        return JsonResponse(
-            {"query": query, "results": results, "total": len(results)},
-            status=200,
-        )
+        if min_score is not None:
+            results = [r for r in results if float(r.get("score") or 0) >= min_score]
+        payload: Dict[str, Any] = {
+            "query": query,
+            "results": results,
+            "total": len(results),
+        }
+        if min_score is not None:
+            payload["min_score_applied"] = min_score
+        return JsonResponse(payload, status=200)
 
 
 @method_decorator(csrf_exempt, name="dispatch")
-class ConversationalSearchAPIView(View):
+class ConversationalSearchAPIView(SearchPermissionMixin, View):
     """Session-aware semantic search.
 
     Accepts ``POST`` with a JSON body or a form payload:
@@ -69,14 +302,40 @@ class ConversationalSearchAPIView(View):
     The endpoint disables itself with HTTP 404 when
     ``CONVERSATIONAL.ENABLED`` is false, so it is safe to leave the URL
     registered globally.
+
+    **Production:** при ``MEMORY_BACKEND="inmemory"`` история сессии живёт только
+    в памяти текущего процесса — при нескольких воркерах Gunicorn/uWSGI сессии
+    «теряются» между воркерами. Рекомендуемая конфигурация::
+
+        "CONVERSATIONAL": {
+            "ENABLED": True,
+            "MEMORY_BACKEND": "redis",
+            "MEMORY_OPTIONS": {
+                "alias": "default",
+                "key_prefix": "dgs_conv",
+                "ttl": 3600,
+            },
+            "MAX_HISTORY_ITEMS": 10,
+        }
     """
 
-    # Module-level memory cache: keep a single backend per process so the
-    # in-memory variant actually persists across requests in tests and dev.
-    _memory_cache: Dict[str, Any] = {}
-
-    def post(self, request, *args, **kwargs):
+    def post(self, request: HttpRequest, *args: Any, **kwargs: Any) -> JsonResponse:
+        denied = self._check_access(request)
+        if denied is not None:
+            return denied
         cfg = get_settings()
+        if (
+            cfg.conversational.enabled
+            and cfg.conversational.memory_backend == "inmemory"
+            and not django_settings.DEBUG
+        ):
+            warnings.warn(
+                "GRAPH_SEARCH CONVERSATIONAL.MEMORY_BACKEND='inmemory' is not safe for "
+                "multi-process production deployments (Gunicorn, uWSGI). "
+                "Switch to MEMORY_BACKEND='redis' for correct session continuity.",
+                stacklevel=2,
+                category=RuntimeWarning,
+            )
         if not cfg.conversational.enabled:
             return JsonResponse({"error": "Conversational search is disabled."}, status=404)
         payload = self._parse_body(request)
@@ -87,13 +346,17 @@ class ConversationalSearchAPIView(View):
         models = payload.get("models")
         if isinstance(models, str):
             models = [m.strip() for m in models.split(",") if m.strip()]
-        limit = payload.get("limit")
-        try:
-            limit_value = int(limit) if limit is not None else None
-        except (TypeError, ValueError):
-            limit_value = None
+        limit_value, err = _parse_int_param(
+            payload.get("limit"),
+            "limit",
+            default=None,
+            min_value=1,
+            max_value=1000,
+        )
+        if err is not None:
+            return err
 
-        memory = self._get_memory_backend(cfg)
+        memory = get_conversation_memory_backend(cfg)
         searcher = Searcher()
         graph = self._build_graph(cfg, searcher=searcher, memory=memory)
         state = {
@@ -119,22 +382,24 @@ class ConversationalSearchAPIView(View):
         }
         return JsonResponse(body, status=200)
 
-    # GET is handy for clearing the conversation.
-    def delete(self, request, *args, **kwargs):
+    def delete(self, request: HttpRequest, *args: Any, **kwargs: Any) -> JsonResponse:
+        denied = self._check_access(request)
+        if denied is not None:
+            return denied
         cfg = get_settings()
         if not cfg.conversational.enabled:
             return JsonResponse({"error": "Conversational search is disabled."}, status=404)
         cid = request.GET.get("conversation_id") or self._parse_body(request).get("conversation_id")
         if not cid:
             return JsonResponse({"error": "conversation_id is required."}, status=400)
-        memory = self._get_memory_backend(cfg)
+        memory = get_conversation_memory_backend(cfg)
         memory.clear_history(cid)
         return JsonResponse({"conversation_id": cid, "cleared": True}, status=200)
 
     # ----------------------------------------------------------- helpers
 
     @staticmethod
-    def _parse_body(request) -> Dict[str, Any]:
+    def _parse_body(request: HttpRequest) -> Dict[str, Any]:
         if request.body:
             content_type = (request.META.get("CONTENT_TYPE") or "").split(";")[0].strip()
             if content_type == "application/json":
@@ -148,28 +413,8 @@ class ConversationalSearchAPIView(View):
         merged.update(request.GET.dict() if hasattr(request.GET, "dict") else {})
         return merged
 
-    @classmethod
-    def _get_memory_backend(cls, cfg):
-        from .memory import build_memory_backend
-
-        cache_key = (
-            cfg.conversational.memory_backend,
-            tuple(sorted((cfg.conversational.memory_options or {}).items())),
-            cfg.conversational.max_history_items,
-        )
-        existing = cls._memory_cache.get(cache_key)
-        if existing is not None:
-            return existing
-        backend = build_memory_backend(
-            cfg.conversational.memory_backend,
-            max_history_items=cfg.conversational.max_history_items,
-            options=cfg.conversational.memory_options,
-        )
-        cls._memory_cache[cache_key] = backend
-        return backend
-
     @staticmethod
-    def _build_graph(cfg, *, searcher, memory):
+    def _build_graph(cfg: GraphSearchConfig, *, searcher: Searcher, memory: Any) -> Any:
         from django.utils.module_loading import import_string
 
         factory = import_string(cfg.conversational.followup_graph)
@@ -177,7 +422,7 @@ class ConversationalSearchAPIView(View):
 
 
 @method_decorator(csrf_exempt, name="dispatch")
-class StreamingSearchAPIView(View):
+class StreamingSearchAPIView(SearchPermissionMixin, View):
     """Stream pipeline events back to the client as they happen.
 
     The endpoint is opt-in: it returns HTTP 404 unless
@@ -195,13 +440,26 @@ class StreamingSearchAPIView(View):
     marker.
     """
 
-    def get(self, request, *args, **kwargs):
+    def get(
+        self,
+        request: HttpRequest,
+        *args: Any,
+        **kwargs: Any,
+    ) -> StreamingHttpResponse | JsonResponse:
         return self._handle(request)
 
-    def post(self, request, *args, **kwargs):
+    def post(
+        self,
+        request: HttpRequest,
+        *args: Any,
+        **kwargs: Any,
+    ) -> StreamingHttpResponse | JsonResponse:
         return self._handle(request)
 
-    def _handle(self, request):
+    def _handle(self, request: HttpRequest) -> StreamingHttpResponse | JsonResponse:
+        denied = self._check_access(request)
+        if denied is not None:
+            return denied
         cfg = get_settings()
         if not cfg.streaming.enabled:
             return JsonResponse({"error": "Streaming search is disabled."}, status=404)
@@ -213,10 +471,15 @@ class StreamingSearchAPIView(View):
         models = payload.get("models")
         if isinstance(models, str):
             models = [m.strip() for m in models.split(",") if m.strip()]
-        try:
-            limit = int(payload.get("limit")) if payload.get("limit") else None
-        except (TypeError, ValueError):
-            limit = None
+        limit, err = _parse_int_param(
+            payload.get("limit"),
+            "limit",
+            default=None,
+            min_value=1,
+            max_value=1000,
+        )
+        if err is not None:
+            return err
 
         hub = EventHub()
         events_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
@@ -228,7 +491,7 @@ class StreamingSearchAPIView(View):
 
         result_holder: Dict[str, Any] = {}
 
-        def _runner():
+        def _runner() -> None:
             try:
                 result_holder["results"] = searcher.search(
                     query, models=models, limit=limit
@@ -285,7 +548,7 @@ class StreamingSearchAPIView(View):
         return response
 
     @staticmethod
-    def _extract_payload(request) -> Dict[str, Any]:
+    def _extract_payload(request: HttpRequest) -> Dict[str, Any]:
         if request.method == "POST" and request.body:
             ctype = (request.META.get("CONTENT_TYPE") or "").split(";")[0].strip()
             if ctype == "application/json":
@@ -302,12 +565,24 @@ class StreamingSearchAPIView(View):
 def _format_event(event: Dict[str, Any], fmt: str) -> bytes:
     payload = json.dumps(event, ensure_ascii=False, default=str)
     if fmt == "sse":
-        return f"event: {event.get('type', 'message')}\ndata: {payload}\n\n".encode("utf-8")
+        event_type = event.get("type", "message")
+        lines = (
+            f"event: {event_type}\n"
+            f"data: {payload}\n\n"
+        )
+        return lines.encode("utf-8")
     return (payload + "\n").encode("utf-8")
 
 
 class SimilarAPIView(View):
-    def get(self, request, model: str, pk: str, *args, **kwargs):
+    def get(
+        self,
+        request: HttpRequest,
+        model: str,
+        pk: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> JsonResponse:
         if "." not in model:
             return JsonResponse({"error": "Model must be in 'app.Model' format."}, status=400)
         app_label, model_name = model.split(".", 1)
@@ -317,8 +592,15 @@ class SimilarAPIView(View):
         instance = model_cls.objects.filter(pk=pk).first()
         if instance is None:
             return JsonResponse({"error": "Object not found."}, status=404)
-        limit = request.GET.get("limit")
-        limit_value = int(limit) if limit else None
+        limit_value, err = _parse_int_param(
+            request.GET.get("limit"),
+            "limit",
+            default=None,
+            min_value=1,
+            max_value=1000,
+        )
+        if err is not None:
+            return err
         searcher = Searcher()
         results = searcher.find_similar(instance, limit=limit_value)
         return JsonResponse(
@@ -330,4 +612,3 @@ class SimilarAPIView(View):
             },
             status=200,
         )
-

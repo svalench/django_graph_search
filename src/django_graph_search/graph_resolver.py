@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Iterable, List, Set, Tuple
+from typing import Any, Iterable, List, Optional, Set, Tuple
 
 from django.db import models
 
@@ -161,9 +161,13 @@ class GraphResolver:
             return [str(item) for item in value]
         return [str(value)]
 
-    def _apply_weight(self, text: str, weight: float | None) -> List[str]:
-        if not weight or weight <= 1:
-            return [text]
-        repeat = int(round(weight))
-        return [text] * max(1, repeat)
+    def _apply_weight(self, text: str, weight: Optional[float]) -> List[str]:
+        """Повторяет фрагмент текста согласно весу; 0 — полностью исключить из индекса."""
+        if not text:
+            return []
+        w = weight if weight is not None else 1.0
+        if w <= 0.0:
+            return []
+        repeat = max(1, round(w))
+        return [text] * repeat
 

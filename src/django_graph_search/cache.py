@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from abc import ABC, abstractmethod
 from hashlib import sha256
 from typing import Optional
@@ -24,6 +25,18 @@ class BaseDeltaCache(ABC):
     def delete(self, key: str) -> None:
         raise NotImplementedError
 
+    def purge_expired(self, dry_run: bool = False) -> int:
+        """
+        Удалить просроченные записи кэша (если бэкенд это поддерживает).
+
+        Args:
+            dry_run: Если True, только подсчитать кандидатов на удаление.
+
+        Returns:
+            Количество удалённых (или подлежащих удалению при dry_run) записей.
+        """
+        return 0
+
 
 class FileDeltaCache(BaseDeltaCache):
     def __init__(self, directory: str) -> None:
@@ -37,13 +50,23 @@ class FileDeltaCache(BaseDeltaCache):
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 payload = json.load(handle)
+            expires_at = payload.get("expires_at")
+            if expires_at is not None and time.time() > expires_at:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                return None
             return payload.get("value")
         except Exception:
             return None
 
     def set(self, key: str, value: str, ttl: int) -> None:
         path = self._key_to_path(key)
-        payload = {"value": value}
+        payload = {
+            "value": value,
+            "expires_at": time.time() + ttl if ttl and ttl > 0 else None,
+        }
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle)
 
@@ -51,6 +74,38 @@ class FileDeltaCache(BaseDeltaCache):
         path = self._key_to_path(key)
         if os.path.exists(path):
             os.remove(path)
+
+    def purge_expired(self, dry_run: bool = False) -> int:
+        """
+        Пройти каталог и удалить json-файлы с истёкшим ``expires_at``.
+
+        Args:
+            dry_run: Только подсчёт без удаления.
+
+        Returns:
+            Число удалённых или кандидатов на удаление.
+        """
+        deleted = 0
+        now = time.time()
+        try:
+            names = os.listdir(self.directory)
+        except OSError:
+            return 0
+        for filename in names:
+            if not filename.endswith(".json"):
+                continue
+            path = os.path.join(self.directory, filename)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                expires_at = payload.get("expires_at")
+                if expires_at is not None and now > expires_at:
+                    deleted += 1
+                    if not dry_run:
+                        os.remove(path)
+            except Exception:
+                pass
+        return deleted
 
     def _key_to_path(self, key: str) -> str:
         digest = sha256(key.encode("utf-8")).hexdigest()

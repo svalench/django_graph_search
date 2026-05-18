@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import List
 
 from django_graph_search.settings import (
@@ -44,17 +45,6 @@ def with_embeddings(
     default_embedding: str = "default",
 ) -> GraphSearchConfig:
     """Return a config with overridden embedding profiles."""
-    return GraphSearchConfig(
-        models=config.models,
-        vector_store=config.vector_store,
-        embeddings=embeddings,
-        default_embedding=default_embedding,
-        api_url_prefix=config.api_url_prefix,
-        admin_search_enabled=config.admin_search_enabled,
-        auto_index=config.auto_index,
-        default_results_limit=config.default_results_limit,
-        delta_indexing=config.delta_indexing,
-        cache=config.cache,
-    )
+    return replace(config, embeddings=embeddings, default_embedding=default_embedding)
 
 

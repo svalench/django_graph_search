@@ -34,7 +34,14 @@ pip install django-graph-search[faiss]
 # Qdrant backend (production, scalable)
 pip install django-graph-search[qdrant]
 
-# All backends
+# pgvector (PostgreSQL extension)
+pip install django-graph-search[pgvector]
+
+# OpenAI / Cohere cloud embeddings (no local PyTorch model)
+pip install django-graph-search[openai]
+pip install django-graph-search[cohere]
+
+# All backends + LangGraph
 pip install django-graph-search[all]
 ```
 
@@ -62,8 +69,9 @@ GRAPH_SEARCH = {
             "follow_relations": True,
             "relation_depth": 2,
         },
-        # Or index all concrete fields:
-        # {"model": "shop.Review", "fields": "__all__"}
+        # Or index all concrete fields (weight_fields still apply by field name):
+        # {"model": "shop.Review", "fields": "__all__",
+        #  "weight_fields": {"title": 2.0, "body": 1.0, "internal_note": 0.0}},
     ],
     "VECTOR_STORE": {
         "BACKEND": "django_graph_search.backends.ChromaDBBackend",
@@ -91,8 +99,13 @@ GRAPH_SEARCH = {
         "OPTIONS": {"path": "graph_search_cache"},
         "TTL": 86400,
     },
+    # Optional REST hardening — permissions / throttling (see "Securing the REST API"):
+    # "API": { ... },
 }
 ```
+
+To restrict access to the main search, streaming, and conversational HTTP endpoints,
+add an `"API"` block as described [below](#securing-the-rest-api-optional).
 
 ### 3. Add URLs
 
@@ -116,7 +129,7 @@ python manage.py build_search_index
 
 ```bash
 # REST API
-GET /api/search/?q=wireless+headphones&models=shop.Product&limit=5
+GET /api/search/?q=wireless+headphones&models=shop.Product&limit=5&min_score=0.75
 
 # Find similar items
 GET /api/search/similar/shop.Product/42/?limit=5
@@ -162,10 +175,96 @@ similar = get_similar(product_instance, limit=5)
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/search/?q=...&models=...&limit=...` | `GET` | Semantic full-text search |
+| `/api/search/?q=...&models=...&limit=...&min_score=...` | `GET` | Semantic search; optional `min_score` (0.0–1.0) drops weaker hits |
 | `/api/search/similar/{app}.{Model}/{id}/` | `GET` | Find similar objects |
 | `/api/search/conversation/` | `POST` | Session-aware conversational search (optional, see below) |
 | `/api/search/conversation/?conversation_id=...` | `DELETE` | Clear a conversation history |
+| `/api/search/stream/` | `GET`, `POST` | Streaming search events (optional) |
+
+Each result object includes **`model`**, **`pk`**, **`score`** (0.0–1.0 similarity), and **`text`**
+(the indexed document string). When `min_score` is used, the response also contains
+**`min_score_applied`**.
+
+### Query parameters (`limit`)
+
+The `limit` parameter controls how many results are returned (where supported):
+
+| Where | Parameter |
+|---|---|
+| `/api/search/` | Query string `limit` |
+| `/api/search/` | Query string `min_score` (optional, float 0.0–1.0) |
+| `/api/search/similar/.../` | Query string `limit` |
+| `/api/search/stream/` | Query string or JSON/form body `limit` |
+| `/api/search/conversation/` | JSON/form field `limit` |
+
+Rules:
+
+- Must be a **positive integer** in the range **1–1000**. Values greater than **1000**
+  are **clamped to 1000** and a warning is logged.
+- Invalid values (non-numeric strings, negative numbers, booleans, etc.) produce
+  **HTTP 400** with JSON `{"error": "'limit' must be a positive integer."}`.
+- If `min_score` is set on **`/api/search/`**, only results with **`score >= min_score`**
+  are returned. The JSON body includes **`min_score_applied`** with the threshold used.
+  Invalid values return **HTTP 400**.
+
+### Optional embedding backends (OpenAI / Cohere)
+
+Instead of downloading a **sentence-transformers** model, you can point ``EMBEDDINGS`` at
+``django_graph_search.embeddings.OpenAIEmbeddingBackend`` or
+``django_graph_search.embeddings.CohereEmbeddingBackend`` (extras ``[openai]`` / ``[cohere]``).
+Cohere uses asymmetric ``input_type``: indexing uses document mode and search uses query mode
+(``embed_batch(..., is_query=False)`` vs ``embed(..., is_query=True)``).
+
+### Async indexing from signals (optional)
+
+When ``AUTO_INDEX`` is on, saves can block on large graphs. Enable ``ASYNC_INDEXING`` to offload work:
+
+```python
+"ASYNC_INDEXING": {
+    "ENABLED": True,
+    "BACKEND": "celery",  # or "thread" | "django_q"
+    "CELERY_QUEUE": "search_indexing",
+    "CELERY_TASK_PATH": "django_graph_search.tasks.index_instance_task",
+    "CELERY_DELETE_TASK_PATH": "django_graph_search.tasks.delete_instance_task",
+},
+```
+
+With ``thread``, indexing runs in a daemon thread (no retries). With ``celery``, install Celery
+and register tasks; if Celery is missing, the task module falls back to synchronous execution with a warning.
+
+### Securing the REST API (optional)
+
+**Scope:** Settings under `GRAPH_SEARCH["API"]` apply only to **`GET /api/search/`**,
+**`/api/search/stream/`**, **`POST`** and **`DELETE /api/search/conversation/`**.
+They do **not** apply to **`/api/search/similar/.../`** — protect that route separately
+(e.g. Django middleware, URL-level decorators, nginx, or wrapping in your own authenticated view).
+
+By default the search endpoints remain **public** (backward compatible). Configure
+``GRAPH_SEARCH["API"]`` to add authentication, permissions, and throttling:
+
+```python
+GRAPH_SEARCH = {
+    # ... existing keys ...
+    "API": {
+        "REQUIRE_AUTHENTICATION": True,
+        "PERMISSION_CLASSES": [
+            # "rest_framework.permissions.IsAuthenticated",  # if DRF is installed
+            # or a dotted path to a callable(request) -> bool
+        ],
+        "THROTTLE_CLASSES": [
+            "django_graph_search.permissions.SimpleScopedRateThrottle",
+        ],
+        "THROTTLE_RATES": {
+            "search": "60/minute",
+            "search_authenticated": "300/minute",
+        },
+    },
+}
+```
+
+``SimpleScopedRateThrottle`` applies **in-process** limits (per Gunicorn worker).
+For accurate global limits across workers, use DRF cache-backed throttles or a
+reverse-proxy rate limit.
 
 ## Management Commands
 
@@ -174,6 +273,8 @@ python manage.py build_search_index                  # Index all configured mode
 python manage.py build_search_index --model shop.Product  # Index one model
 python manage.py clear_search_index                  # Remove all vectors
 python manage.py search_index_status                 # Show index statistics
+python manage.py purge_search_cache                  # Remove expired file delta cache (CACHE.BACKEND=file)
+python manage.py purge_search_cache --dry-run        # Count expired entries without deleting
 ```
 
 ## Admin UI
@@ -187,6 +288,9 @@ After installation, navigate to `/admin/graph-search/` for a semantic search int
 | ChromaDB | Development, small-medium datasets | No |
 | FAISS | High-speed CPU search, offline | No |
 | Qdrant | Production, large datasets, filtering | Yes |
+| **pgvector** (`django_graph_search.backends.PgvectorBackend`) | Same PostgreSQL as Django, no separate vector server | PostgreSQL + `vector` extension |
+
+Install: `pip install django-graph-search[pgvector]`. Table is created automatically on first use (see backend docstring for `VECTOR_STORE.OPTIONS`).
 
 ## Delta Indexing & Cache
 
@@ -197,6 +301,14 @@ Enable `DELTA_INDEXING: True` to skip objects that haven’t changed since last 
 | `file` | `OPTIONS.path` | Local dev |
 | `redis` | `OPTIONS.alias` | Production |
 | `db` | `OPTIONS.alias` | Simple setup |
+
+With **`CACHE.BACKEND: "file"`**, each delta entry stores an **`expires_at`**
+timestamp derived from **`CACHE.TTL`**. Expired entries are removed **lazily** when read;
+the directory can still grow if keys are never re-read — run
+`python manage.py purge_search_cache` periodically (or via cron), or use
+`--dry-run` to count stale files without deleting. Redis/db backends use Django’s
+cache TTL and do not require this command; `purge_search_cache` only affects the
+file backend.
 
 ## LangGraph-powered search pipeline (optional)
 
@@ -266,12 +378,22 @@ GRAPH_SEARCH = {
     # ... existing config ...
     "CONVERSATIONAL": {
         "ENABLED": True,
-        "MEMORY_BACKEND": "inmemory",   # or "cache" / dotted path.
+        "MEMORY_BACKEND": "redis",
+        "MEMORY_OPTIONS": {
+            "alias": "default",        # Django CACHES alias
+            "key_prefix": "dgs_conv",
+            "ttl": 3600,
+        },
         "MAX_HISTORY_ITEMS": 10,
         "ALLOW_CLARIFICATIONS": True,
     },
 }
 ```
+
+For local development and tests, ``MEMORY_BACKEND: "inmemory"`` is fine. With
+``DEBUG=False`` (typical production), the library emits a ``RuntimeWarning`` if
+in-memory mode is left enabled — switch to ``redis`` (Django cache → Redis) so
+every Gunicorn worker shares the same conversation state.
 
 Endpoint: `POST /api/search/conversation/`
 

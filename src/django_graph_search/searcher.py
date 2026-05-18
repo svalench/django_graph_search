@@ -12,7 +12,7 @@ from .components import ComponentMixin
 from .events import EventHub
 from .graph_resolver import GraphResolver
 from .llm import BaseLLMBackend, build_llm_backend
-from .settings import GraphSearchConfig, ModelConfig, get_settings
+from .settings import GraphSearchConfig, ModelConfig
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ class Searcher(ComponentMixin):
                     raise
                 log.warning("LangGraph find_similar failed, falling back: %s", exc)
 
-        query_vector = self.embedding_backend.embed(text)
+        query_vector = self.embedding_backend.embed(text, is_query=True)
         results = self.vector_store.search(
             query_vector,
             limit=limit,
@@ -108,7 +108,7 @@ class Searcher(ComponentMixin):
         limit: int,
     ) -> List[dict]:
         """Original deterministic search path. Kept for backwards compatibility."""
-        query_vector = self.embedding_backend.embed(query)
+        query_vector = self.embedding_backend.embed(query, is_query=True)
         results = self.vector_store.search(query_vector, limit=limit, filters=None)
         if models:
             allowed = set(models)
@@ -165,7 +165,16 @@ class Searcher(ComponentMixin):
     def _format_result(self, item) -> dict:
         model_label = item.metadata.get("model")
         pk = item.metadata.get("pk")
-        data = {"model": model_label, "pk": pk, "score": item.score}
+        raw_score = item.score
+        score = float(raw_score) if raw_score is not None else 0.0
+        score = max(0.0, min(1.0, score))
+        text = item.metadata.get("text") or ""
+        data = {
+            "model": model_label,
+            "pk": pk,
+            "score": score,
+            "text": text,
+        }
         if model_label and pk is not None:
             model_cls = self._get_model_class(model_label)
             obj = model_cls.objects.filter(pk=pk).first()

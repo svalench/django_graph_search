@@ -72,6 +72,23 @@ DEFAULTS: Dict[str, Any] = {
         "FORMAT": "ndjson",  # "ndjson" or "sse"
         "INCLUDE_INTERNAL_EVENTS": True,
     },
+    "API": {
+        "PERMISSION_CLASSES": [],
+        "THROTTLE_CLASSES": [],
+        "THROTTLE_RATES": {
+            "search": "60/minute",
+            "search_authenticated": "300/minute",
+        },
+        "REQUIRE_AUTHENTICATION": False,
+    },
+    "ASYNC_INDEXING": {
+        "ENABLED": False,
+        "BACKEND": "celery",
+        "CELERY_QUEUE": "search_indexing",
+        "CELERY_TASK_PATH": "django_graph_search.tasks.index_instance_task",
+        "CELERY_DELETE_TASK_PATH": "django_graph_search.tasks.delete_instance_task",
+        "THREAD_POOL_SIZE": 4,
+    },
 }
 
 
@@ -142,6 +159,28 @@ class StreamingConfig:
 
 
 @dataclass(frozen=True)
+class ApiConfig:
+    """Настройки доступа и throttling для REST search API."""
+
+    permission_classes: List[str] = field(default_factory=list)
+    throttle_classes: List[str] = field(default_factory=list)
+    throttle_rates: Dict[str, str] = field(default_factory=dict)
+    require_authentication: bool = False
+
+
+@dataclass(frozen=True)
+class AsyncIndexingConfig:
+    """Опциональная асинхронная переиндексация по сигналам (Celery / поток / django-q)."""
+
+    enabled: bool = False
+    backend: str = "celery"
+    celery_queue: str = "search_indexing"
+    celery_task_path: str = "django_graph_search.tasks.index_instance_task"
+    celery_delete_task_path: str = "django_graph_search.tasks.delete_instance_task"
+    thread_pool_size: int = 4
+
+
+@dataclass(frozen=True)
 class ConversationalConfig:
     enabled: bool = False
     memory_backend: str = "inmemory"
@@ -168,6 +207,8 @@ class GraphSearchConfig:
     conversational: ConversationalConfig = field(default_factory=ConversationalConfig)
     smart_indexing: SmartIndexingConfig = field(default_factory=SmartIndexingConfig)
     streaming: StreamingConfig = field(default_factory=StreamingConfig)
+    api: ApiConfig = field(default_factory=ApiConfig)
+    async_indexing: AsyncIndexingConfig = field(default_factory=AsyncIndexingConfig)
 
 
 def _merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -178,6 +219,29 @@ def _merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, An
         else:
             merged[key] = value
     return merged
+
+
+def _normalize_weight_fields(raw: Any) -> Dict[str, float]:
+    """
+    Нормализует веса полей в float (в т.ч. при fields='__all__').
+
+    Нулевой или отрицательный вес допускается: граф-резолвер исключит поле из текста.
+    """
+    if raw is None or raw == {}:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigurationError("'weight_fields' must be a dict.")
+    out: Dict[str, float] = {}
+    for key, val in raw.items():
+        if not isinstance(key, str):
+            key = str(key)
+        try:
+            out[key] = float(val)
+        except (TypeError, ValueError) as exc:
+            raise ConfigurationError(
+                f"weight_fields[{key!r}] must be a number."
+            ) from exc
+    return out
 
 
 def _validate_models(models: Iterable[Dict[str, Any]], depth_default: int) -> List[ModelConfig]:
@@ -195,16 +259,15 @@ def _validate_models(models: Iterable[Dict[str, Any]], depth_default: int) -> Li
             raise ConfigurationError("Model config requires 'fields' list or '__all__'.")
         follow_relations = bool(item.get("follow_relations", True))
         relation_depth = int(item.get("relation_depth", depth_default))
-        weight_fields = item.get("weight_fields", {})
-        if weight_fields and not isinstance(weight_fields, dict):
-            raise ConfigurationError("'weight_fields' must be a dict.")
+        # Веса парсятся всегда, даже для fields == ["__all__"] (известные имена полей).
+        weight_fields = _normalize_weight_fields(item.get("weight_fields", {}))
         normalized.append(
             ModelConfig(
                 model=model,
                 fields=fields,
                 follow_relations=follow_relations,
                 relation_depth=relation_depth,
-                weight_fields=weight_fields or {},
+                weight_fields=weight_fields,
             )
         )
     return normalized
@@ -262,6 +325,8 @@ def get_settings() -> GraphSearchConfig:
     conversational_cfg = _build_conversational_config(merged.get("CONVERSATIONAL") or {})
     smart_indexing_cfg = _build_smart_indexing_config(merged.get("SMART_INDEXING") or {})
     streaming_cfg = _build_streaming_config(merged.get("STREAMING") or {})
+    api_cfg = _build_api_config(merged.get("API") or {})
+    async_indexing_cfg = _build_async_indexing_config(merged.get("ASYNC_INDEXING") or {})
 
     # Validate backend paths early
     _load_backend(vector_store.backend)
@@ -283,6 +348,41 @@ def get_settings() -> GraphSearchConfig:
         conversational=conversational_cfg,
         smart_indexing=smart_indexing_cfg,
         streaming=streaming_cfg,
+        api=api_cfg,
+        async_indexing=async_indexing_cfg,
+    )
+
+
+def _build_async_indexing_config(payload: Dict[str, Any]) -> AsyncIndexingConfig:
+    """Построить AsyncIndexingConfig из GRAPH_SEARCH['ASYNC_INDEXING']."""
+    if not isinstance(payload, dict):
+        raise ConfigurationError("ASYNC_INDEXING must be a dict.")
+    defaults = DEFAULTS["ASYNC_INDEXING"]
+    merged = _merge_dicts(defaults, payload)
+    backend = str(merged.get("BACKEND") or "celery").lower()
+    if backend not in {"celery", "django_q", "thread"}:
+        raise ConfigurationError(
+            "ASYNC_INDEXING.BACKEND must be 'celery', 'django_q', or 'thread'."
+        )
+    task_path = merged.get("CELERY_TASK_PATH") or defaults["CELERY_TASK_PATH"]
+    if not isinstance(task_path, str):
+        raise ConfigurationError("ASYNC_INDEXING.CELERY_TASK_PATH must be a string.")
+    delete_path = merged.get("CELERY_DELETE_TASK_PATH") or defaults["CELERY_DELETE_TASK_PATH"]
+    if not isinstance(delete_path, str):
+        raise ConfigurationError("ASYNC_INDEXING.CELERY_DELETE_TASK_PATH must be a string.")
+    queue = merged.get("CELERY_QUEUE") or defaults["CELERY_QUEUE"]
+    if not isinstance(queue, str):
+        raise ConfigurationError("ASYNC_INDEXING.CELERY_QUEUE must be a string.")
+    pool = int(merged.get("THREAD_POOL_SIZE", 4))
+    if pool < 1:
+        raise ConfigurationError("ASYNC_INDEXING.THREAD_POOL_SIZE must be >= 1.")
+    return AsyncIndexingConfig(
+        enabled=bool(merged.get("ENABLED", False)),
+        backend=backend,
+        celery_queue=queue,
+        celery_task_path=task_path,
+        celery_delete_task_path=delete_path,
+        thread_pool_size=pool,
     )
 
 
@@ -357,6 +457,33 @@ def _build_streaming_config(payload: Dict[str, Any]) -> StreamingConfig:
         enabled=bool(merged.get("ENABLED", False)),
         format=fmt,
         include_internal_events=bool(merged.get("INCLUDE_INTERNAL_EVENTS", True)),
+    )
+
+
+def _build_api_config(payload: Dict[str, Any]) -> ApiConfig:
+    """Построить ApiConfig из пользовательского dict GRAPH_SEARCH['API']."""
+    if not isinstance(payload, dict):
+        raise ConfigurationError("API must be a dict.")
+    defaults = DEFAULTS["API"]
+    merged = _merge_dicts(defaults, payload)
+    permission_classes = merged.get("PERMISSION_CLASSES") or []
+    throttle_classes = merged.get("THROTTLE_CLASSES") or []
+    if not isinstance(permission_classes, list):
+        raise ConfigurationError("API.PERMISSION_CLASSES must be a list.")
+    if not isinstance(throttle_classes, list):
+        raise ConfigurationError("API.THROTTLE_CLASSES must be a list.")
+    throttle_rates = merged.get("THROTTLE_RATES") or {}
+    if not isinstance(throttle_rates, dict):
+        raise ConfigurationError("API.THROTTLE_RATES must be a dict.")
+    normalized_rates: Dict[str, str] = {}
+    for key, val in throttle_rates.items():
+        if val is not None:
+            normalized_rates[str(key)] = str(val)
+    return ApiConfig(
+        permission_classes=[str(p) for p in permission_classes],
+        throttle_classes=[str(t) for t in throttle_classes],
+        throttle_rates=normalized_rates,
+        require_authentication=bool(merged.get("REQUIRE_AUTHENTICATION", False)),
     )
 
 
