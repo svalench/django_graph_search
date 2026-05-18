@@ -33,7 +33,9 @@ class DjangoCacheBackend(BaseMemoryBackend):
         return caches[self.alias]
 
     def _key(self, session_id: str) -> str:
-        return f"{self.key_prefix}{session_id}"
+        # Единый формат: {prefix}:{conversation_id} (prefix без завершающего «:»)
+        prefix = self.key_prefix.rstrip(":")
+        return f"{prefix}:{session_id}"
 
     def get_history(self, session_id: str) -> List[ConversationEvent]:
         payload = self._cache.get(self._key(session_id)) or []

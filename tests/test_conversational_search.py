@@ -23,7 +23,7 @@ from django_graph_search.memory import (
     build_memory_backend,
 )
 from django_graph_search.settings import get_settings
-from django_graph_search.views import ConversationalSearchAPIView
+from django_graph_search.views import ConversationalSearchAPIView, _memory_backend_registry
 
 
 # ---------------------------------------------------------------------------
@@ -35,9 +35,8 @@ from django_graph_search.views import ConversationalSearchAPIView
 def graph_search_settings():
     original = getattr(django_settings, "GRAPH_SEARCH", None)
     get_settings.cache_clear()
-    # Reset the per-process memory cache between tests so each test starts
-    # from a clean slate.
-    ConversationalSearchAPIView._memory_cache.clear()
+    # Сброс singleton бэкендов памяти между тестами
+    _memory_backend_registry.clear()
 
     def _apply(payload):
         django_settings.GRAPH_SEARCH = payload
@@ -51,7 +50,7 @@ def graph_search_settings():
     elif original is not None:
         django_settings.GRAPH_SEARCH = original
     get_settings.cache_clear()
-    ConversationalSearchAPIView._memory_cache.clear()
+    _memory_backend_registry.clear()
 
 
 def _base_settings(extra=None):

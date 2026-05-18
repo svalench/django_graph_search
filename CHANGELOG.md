@@ -5,6 +5,30 @@ All notable changes to **django-graph-search** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+- **REST API access control:** new optional ``GRAPH_SEARCH["API"]`` settings
+  (``PERMISSION_CLASSES``, ``THROTTLE_CLASSES``, ``THROTTLE_RATES``,
+  ``REQUIRE_AUTHENTICATION``) with pluggable checks in
+  ``django_graph_search.permissions``. Search, streaming, and conversational
+  views run these checks before handling requests. Defaults are empty / false so
+  behaviour stays open unless you configure restrictions.
+- **Safe integer parsing for ``limit``:** invalid or negative ``limit`` values on
+  search, streaming, conversational, and similar endpoints return HTTP 400
+  instead of raising ``ValueError`` (500). Values above 1000 are clamped with a
+  warning in logs.
+
+### Fixed
+- **File delta cache TTL:** ``FileDeltaCache`` now stores ``expires_at``,
+  enforces expiry on read (lazy delete), and supports ``purge_expired(dry_run=)``
+  plus the ``purge_search_cache`` management command for file backends.
+- **Conversational memory registry:** per-process memory backends are cached in a
+  module-level registry with a lock (replacing a class attribute). A
+  ``RuntimeWarning`` is emitted when ``CONVERSATIONAL.MEMORY_BACKEND="inmemory"``,
+  conversational search is enabled, and ``DEBUG`` is false, to highlight
+  multi-worker limitations.
+
 ## [0.2.0] — 2026-05-08
 
 A large feature release built around an **optional LangGraph orchestration layer**.

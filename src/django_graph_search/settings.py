@@ -72,6 +72,15 @@ DEFAULTS: Dict[str, Any] = {
         "FORMAT": "ndjson",  # "ndjson" or "sse"
         "INCLUDE_INTERNAL_EVENTS": True,
     },
+    "API": {
+        "PERMISSION_CLASSES": [],
+        "THROTTLE_CLASSES": [],
+        "THROTTLE_RATES": {
+            "search": "60/minute",
+            "search_authenticated": "300/minute",
+        },
+        "REQUIRE_AUTHENTICATION": False,
+    },
 }
 
 
@@ -142,6 +151,16 @@ class StreamingConfig:
 
 
 @dataclass(frozen=True)
+class ApiConfig:
+    """Настройки доступа и throttling для REST search API."""
+
+    permission_classes: List[str] = field(default_factory=list)
+    throttle_classes: List[str] = field(default_factory=list)
+    throttle_rates: Dict[str, str] = field(default_factory=dict)
+    require_authentication: bool = False
+
+
+@dataclass(frozen=True)
 class ConversationalConfig:
     enabled: bool = False
     memory_backend: str = "inmemory"
@@ -168,6 +187,7 @@ class GraphSearchConfig:
     conversational: ConversationalConfig = field(default_factory=ConversationalConfig)
     smart_indexing: SmartIndexingConfig = field(default_factory=SmartIndexingConfig)
     streaming: StreamingConfig = field(default_factory=StreamingConfig)
+    api: ApiConfig = field(default_factory=ApiConfig)
 
 
 def _merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -262,6 +282,7 @@ def get_settings() -> GraphSearchConfig:
     conversational_cfg = _build_conversational_config(merged.get("CONVERSATIONAL") or {})
     smart_indexing_cfg = _build_smart_indexing_config(merged.get("SMART_INDEXING") or {})
     streaming_cfg = _build_streaming_config(merged.get("STREAMING") or {})
+    api_cfg = _build_api_config(merged.get("API") or {})
 
     # Validate backend paths early
     _load_backend(vector_store.backend)
@@ -283,6 +304,7 @@ def get_settings() -> GraphSearchConfig:
         conversational=conversational_cfg,
         smart_indexing=smart_indexing_cfg,
         streaming=streaming_cfg,
+        api=api_cfg,
     )
 
 
@@ -357,6 +379,33 @@ def _build_streaming_config(payload: Dict[str, Any]) -> StreamingConfig:
         enabled=bool(merged.get("ENABLED", False)),
         format=fmt,
         include_internal_events=bool(merged.get("INCLUDE_INTERNAL_EVENTS", True)),
+    )
+
+
+def _build_api_config(payload: Dict[str, Any]) -> ApiConfig:
+    """Построить ApiConfig из пользовательского dict GRAPH_SEARCH['API']."""
+    if not isinstance(payload, dict):
+        raise ConfigurationError("API must be a dict.")
+    defaults = DEFAULTS["API"]
+    merged = _merge_dicts(defaults, payload)
+    permission_classes = merged.get("PERMISSION_CLASSES") or []
+    throttle_classes = merged.get("THROTTLE_CLASSES") or []
+    if not isinstance(permission_classes, list):
+        raise ConfigurationError("API.PERMISSION_CLASSES must be a list.")
+    if not isinstance(throttle_classes, list):
+        raise ConfigurationError("API.THROTTLE_CLASSES must be a list.")
+    throttle_rates = merged.get("THROTTLE_RATES") or {}
+    if not isinstance(throttle_rates, dict):
+        raise ConfigurationError("API.THROTTLE_RATES must be a dict.")
+    normalized_rates: Dict[str, str] = {}
+    for key, val in throttle_rates.items():
+        if val is not None:
+            normalized_rates[str(key)] = str(val)
+    return ApiConfig(
+        permission_classes=[str(p) for p in permission_classes],
+        throttle_classes=[str(t) for t in throttle_classes],
+        throttle_rates=normalized_rates,
+        require_authentication=bool(merged.get("REQUIRE_AUTHENTICATION", False)),
     )
 
 
