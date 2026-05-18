@@ -45,6 +45,27 @@ pip install django-graph-search[cohere]
 pip install django-graph-search[all]
 ```
 
+## What's new in 0.3 (pre-release **0.3.1a1**)
+
+This line is a **pre-release** for smoke-testing packaging and integrations. Install with:
+
+```bash
+pip install --pre django-graph-search==0.3.1a1
+```
+
+Highlights vs **0.2.0** (full detail in [CHANGELOG.md](CHANGELOG.md)):
+
+| Area | Change |
+|------|--------|
+| **REST hits** | Each result includes `score` (0.0–1.0) and `text`. Optional `min_score` query parameter filters weak matches; responses may include `min_score_applied`. |
+| **Indexing** | `weight_fields` is always honored, including with `fields: "__all__"`; weight `0.0` drops a field from indexed text. |
+| **Async signals** | `ASYNC_INDEXING` (Celery, `thread`, or django-q) plus `django_graph_search.tasks` so `AUTO_INDEX` can avoid blocking the request thread. |
+| **Backends / embeddings** | **Pgvector** backend (`[pgvector]`). **OpenAI** / **Cohere** embedding backends (`[openai]`, `[cohere]`). |
+| **Scores** | ChromaDB / FAISS / Qdrant normalize distances to similarity scores in 0–1 for consistent API output. |
+| **Security / API** | Optional `GRAPH_SEARCH["API"]`: `PERMISSION_CLASSES`, `THROTTLE_CLASSES`, `THROTTLE_RATES`, `REQUIRE_AUTHENTICATION` via `django_graph_search.permissions` (defaults keep behaviour open). |
+| **Validation** | Invalid or negative `limit` on search, streaming, conversational, and similar endpoints returns **400** (not 500); values above 1000 are clamped with a log warning. |
+| **Fixes** | ChromaDB cosine metadata and distance mapping; file delta cache TTL and `purge_search_cache`; conversational in-memory registry + `RuntimeWarning` when `DEBUG` is false. |
+
 ## Quick Start (5 minutes)
 
 ### 1. Add to INSTALLED_APPS

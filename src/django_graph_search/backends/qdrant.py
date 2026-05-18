@@ -89,3 +89,21 @@ class QdrantBackend(BaseVectorStore):
     def clear_collection(self) -> None:
         self.client.delete_collection(collection_name=self.collection_name)
 
+    def count_documents(self, filters: Optional[Dict[str, Any]] = None) -> int:
+        if not self.client.collection_exists(self.collection_name):
+            return 0
+        query_filter = None
+        if filters:
+            conditions = [
+                self.qmodels.FieldCondition(
+                    key=key, match=self.qmodels.MatchValue(value=value)
+                )
+                for key, value in filters.items()
+            ]
+            query_filter = self.qmodels.Filter(must=conditions)
+        result = self.client.count(
+            collection_name=self.collection_name,
+            count_filter=query_filter,
+        )
+        return int(result.count)
+

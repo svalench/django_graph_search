@@ -100,6 +100,13 @@ class FaissBackend(BaseVectorStore):
         self._metas = []
         self._embeddings = []
 
+    def count_documents(self, filters: Optional[Dict[str, Any]] = None) -> int:
+        if not self._metas:
+            return 0
+        if filters is None:
+            return len(self._metas)
+        return sum(1 for m in self._metas if self._match_filters(m, filters))
+
     def _match_filters(self, metadata: Dict[str, Any], filters: Dict[str, Any]) -> bool:
         for key, value in filters.items():
             if metadata.get(key) != value:

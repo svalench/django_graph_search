@@ -58,6 +58,9 @@ def test_pgvector_add_search_delete_roundtrip():
     assert isinstance(hits[0], SearchResult)
     assert hits[0].id == "m:1"
     assert 0.0 <= hits[0].score <= 1.0
+    assert store.count_documents() == 2
+    assert store.count_documents({"model": "test_app.Product"}) == 2
+    assert store.count_documents({"model": "test_app.Other"}) == 0
     store.delete(["m:1"])
     after = store.search(vec_a, limit=5, filters=None)
     ids = {h.id for h in after}

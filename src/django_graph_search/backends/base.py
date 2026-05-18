@@ -42,3 +42,8 @@ class BaseVectorStore(ABC):
     def clear_collection(self) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    def count_documents(self, filters: Optional[Dict[str, Any]] = None) -> int:
+        """Число документов в коллекции; при filters — только совпадение по всем ключам (как в search)."""
+        raise NotImplementedError
+

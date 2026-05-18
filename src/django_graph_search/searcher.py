@@ -132,6 +132,12 @@ class Searcher(ComponentMixin):
             "rerank_top_k": self.config.langgraph.rerank_top_k,
         }
         out = graph.invoke(state)
+        # LangGraph + StateGraph(dict): invoke() может не вернуть ключ final_results,
+        # хотя узел postprocess отработал (см. stream). Добираем тем же постпроцессом.
+        if "final_results" not in out:
+            from .langgraph_agent import postprocess_results_node
+
+            out = postprocess_results_node(dict(out))
         results = out.get("final_results") or []
         return [self._format_result(item) for item in results]
 

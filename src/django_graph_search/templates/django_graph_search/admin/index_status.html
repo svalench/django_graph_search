@@ -1,0 +1,56 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block extrastyle %}
+  <link rel="stylesheet" href="{% static 'django_graph_search/css/index_status.css' %}">
+{% endblock %}
+
+{% block content %}
+  <div class="index-status">
+    <nav class="index-status__nav">
+      <a href="{% url 'admin:graph-search' %}">← Graph Search</a>
+    </nav>
+    <h1>Статус индексации</h1>
+    <p class="index-status__meta">Vector store: <code>{{ report.vector_store_backend }}</code></p>
+
+    <section class="index-status__overall" aria-label="Общее покрытие">
+      <div class="index-status__overall-number">{{ report.overall_percent|floatformat:1 }}%</div>
+      <p class="index-status__overall-caption">
+        В индексе: {{ report.total_indexed }} — в БД (сумма по моделям): {{ report.total_db }}
+      </p>
+      <div class="index-status__bar index-status__bar--large" role="img"
+           aria-valuenow="{{ report.overall_bar_percent }}" aria-valuemin="0" aria-valuemax="100"
+           aria-label="Полоса общего покрытия">
+        <div class="index-status__bar-fill" style="width: {{ report.overall_bar_percent }}%;"></div>
+      </div>
+    </section>
+
+    <table class="index-status__table">
+      <thead>
+        <tr>
+          <th>Модель</th>
+          <th>В БД</th>
+          <th>В индексе</th>
+          <th>%</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in report.rows %}
+          <tr>
+            <td><code>{{ row.model_label }}</code></td>
+            <td>{{ row.db_count }}</td>
+            <td>{{ row.indexed_count }}</td>
+            <td>{{ row.percent|floatformat:1 }}%</td>
+            <td class="index-status__cell-bar">
+              <div class="index-status__bar" role="img"
+                   aria-valuenow="{{ row.bar_percent }}" aria-valuemin="0" aria-valuemax="100">
+                <div class="index-status__bar-fill" style="width: {{ row.bar_percent }}%;"></div>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

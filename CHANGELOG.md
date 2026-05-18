@@ -7,6 +7,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1a1] — 2026-05-19
+
+**Pre-release** of the **0.3.1** line. Install for smoke tests:
+
+`pip install --pre django-graph-search==0.3.1a1`
+
+### Added
+- **Admin index coverage:** page `/admin/graph-search/index-status/` shows DB row counts
+  vs vector-store document counts per configured model (metadata `model`), overall
+  percentage, and static progress bars (no auto-refresh). Link from the existing
+  Graph Search admin page.
+- **`count_documents(filters)`** on all built-in vector backends (ChromaDB, FAISS,
+  Qdrant, pgvector) plus coverage output in the `search_index_status` management
+  command.
+
+### Fixed
+- **LangGraph + `graph.invoke()`:** when the compiled graph omits `final_results`
+  from the returned dict, `Searcher` runs `postprocess_results_node` so search
+  results are not empty.
+
 ## [0.3.0a1] — 2026-05-18
 
 **Pre-release** of the upcoming **0.3.0** line. Install for smoke tests:
@@ -182,6 +202,7 @@ and signal handlers behave exactly as before.
 - REST endpoints `/api/search/` and `/api/search/similar/<model>/<pk>/`.
 - `build_search_index` management command.
 
+[0.3.1a1]: https://github.com/svalench/django_graph_search/releases/tag/v0.3.1a1
 [0.3.0a1]: https://github.com/svalench/django_graph_search/releases/tag/v0.3.0a1
 [0.2.0]: https://github.com/svalench/django_graph_search/releases/tag/v0.2.0
 [0.1.2]: https://github.com/svalench/django_graph_search/releases/tag/v0.1.2

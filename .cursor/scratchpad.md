@@ -1,7 +1,5 @@
 # Scratchpad
 
-Pylint CI: `_parse_float_param` один return + `math.isnan`; `_stringify_numeric_param`; переносы строк в views; фикстуры через `fixture(name=...)` (W0621); pgvector/settings/tasks длина строк; `tasks.delete_instance_task` сигнатура.
+Index status: `count_documents` на всех vector backends + `index_coverage.get_index_coverage`, админка `/admin/graph-search/index-status/`, команда `search_index_status` с таблицей покрытия. Searcher: если у `graph.invoke()` нет ключа `final_results`, вызывается `postprocess_results_node` (LangGraph + dict state).
 
-DONE — `pylint $(git ls-files '*.py')` 10/10; pytest по затронутым модулям 16 passed. Полный pytest: 2 fail в `test_langgraph_search` (Searcher + LANGGRAPH), вне этого PR.
-
-Prerelease **0.3.0a1**: `setup.cfg` + `CHANGELOG.md`; `python -m build` → `dist/*.whl` и `dist/*.tar.gz` (папка в `.gitignore`).
+DONE — полный pytest 87 passed, 1 skipped; ruff на изменённых файлах — ok.

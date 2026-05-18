@@ -4,6 +4,7 @@ from django.contrib import admin
 from django.template.response import TemplateResponse
 from django.urls import path
 
+from .index_coverage import get_index_coverage
 from .searcher import Searcher
 from .settings import get_settings
 
@@ -29,6 +30,17 @@ def graph_search_view(request):
     return TemplateResponse(request, "django_graph_search/admin/search.html", context)
 
 
+def graph_search_index_status_view(request):
+    """Статичный снимок покрытия индекса (без автообновления)."""
+    report = get_index_coverage()
+    context = dict(
+        admin.site.each_context(request),
+        title="Статус индексации",
+        report=report,
+    )
+    return TemplateResponse(request, "django_graph_search/admin/index_status.html", context)
+
+
 def _inject_admin_urls(admin_site):
     original_get_urls = admin_site.get_urls
 
@@ -36,10 +48,15 @@ def _inject_admin_urls(admin_site):
         urls = original_get_urls()
         custom = [
             path(
+                "graph-search/index-status/",
+                admin_site.admin_view(graph_search_index_status_view),
+                name="graph-search-index-status",
+            ),
+            path(
                 "graph-search/",
                 admin_site.admin_view(graph_search_view),
                 name="graph-search",
-            )
+            ),
         ]
         return custom + urls
 
