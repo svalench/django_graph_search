@@ -7,6 +7,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0a1] — 2026-05-18
+
+**Pre-release** of the upcoming **0.3.0** line. Install for smoke tests:
+
+`pip install --pre django-graph-search==0.3.0a1`
+
 ### Added
 - **REST search:** each hit includes ``score`` (0.0–1.0) and ``text``; optional query param
   ``min_score`` filters weak matches; response may include ``min_score_applied``.
@@ -176,5 +182,6 @@ and signal handlers behave exactly as before.
 - REST endpoints `/api/search/` and `/api/search/similar/<model>/<pk>/`.
 - `build_search_index` management command.
 
+[0.3.0a1]: https://github.com/svalench/django_graph_search/releases/tag/v0.3.0a1
 [0.2.0]: https://github.com/svalench/django_graph_search/releases/tag/v0.2.0
 [0.1.2]: https://github.com/svalench/django_graph_search/releases/tag/v0.1.2
