@@ -6,7 +6,7 @@ import queue
 import threading
 import uuid
 import warnings
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, Optional, Tuple, Union
 
 from django.apps import apps
 from django.conf import settings as django_settings
@@ -71,6 +71,62 @@ def _parse_int_param(
             max_value,
         )
         parsed = max_value
+    return parsed, None
+
+
+def _parse_float_param(
+    value: Optional[Union[str, int, float]],
+    param_name: str,
+    default: Optional[float] = None,
+    min_value: Optional[float] = None,
+    max_value: Optional[float] = None,
+) -> Tuple[Optional[float], Optional[JsonResponse]]:
+    """
+    Безопасно распарсить float из query/body (например ``min_score``).
+
+    Returns:
+        Кортеж ``(parsed, None)`` при успехе или ``(None, JsonResponse)`` при ошибке.
+    """
+    if value is None or value == "":
+        return default, None
+    if isinstance(value, bool):
+        return None, JsonResponse(
+            {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
+            status=400,
+        )
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return default, None
+        try:
+            parsed = float(stripped)
+        except ValueError:
+            return None, JsonResponse(
+                {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
+                status=400,
+            )
+    else:
+        return None, JsonResponse(
+            {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
+            status=400,
+        )
+    if parsed != parsed:  # NaN
+        return None, JsonResponse(
+            {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
+            status=400,
+        )
+    if min_value is not None and parsed < min_value:
+        return None, JsonResponse(
+            {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
+            status=400,
+        )
+    if max_value is not None and parsed > max_value:
+        return None, JsonResponse(
+            {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
+            status=400,
+        )
     return parsed, None
 
 
@@ -193,13 +249,28 @@ class SearchAPIView(SearchPermissionMixin, View):
         )
         if err is not None:
             return err
+        min_score, err = _parse_float_param(
+            request.GET.get("min_score"),
+            "min_score",
+            default=None,
+            min_value=0.0,
+            max_value=1.0,
+        )
+        if err is not None:
+            return err
 
         searcher = Searcher()
         results = searcher.search(query, models=model_list, limit=limit_value)
-        return JsonResponse(
-            {"query": query, "results": results, "total": len(results)},
-            status=200,
-        )
+        if min_score is not None:
+            results = [r for r in results if float(r.get("score") or 0) >= min_score]
+        payload: Dict[str, Any] = {
+            "query": query,
+            "results": results,
+            "total": len(results),
+        }
+        if min_score is not None:
+            payload["min_score_applied"] = min_score
+        return JsonResponse(payload, status=200)
 
 
 @method_decorator(csrf_exempt, name="dispatch")

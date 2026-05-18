@@ -181,7 +181,10 @@ def embed_batch_node(
     if not documents:
         state["embeddings"] = []
         return state
-    state["embeddings"] = embedding_backend.embed_batch([d["text"] for d in documents])
+    state["embeddings"] = embedding_backend.embed_batch(
+        [d["text"] for d in documents],
+        is_query=False,
+    )
     return state
 
 
@@ -206,7 +209,11 @@ def persist_node(
             Document(
                 id=doc_id,
                 embedding=embedding,
-                metadata={"model": instance._meta.label, "pk": instance.pk},
+                metadata={
+                    "model": instance._meta.label,
+                    "pk": instance.pk,
+                    "text": doc["text"],
+                },
                 text=doc["text"],
             )
         )

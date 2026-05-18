@@ -56,7 +56,13 @@ class FaissBackend(BaseVectorStore):
             metadata = self._metas[idx]
             if filters and not self._match_filters(metadata, filters):
                 continue
-            results.append(SearchResult(id=self._ids[idx], score=float(dist), metadata=metadata))
+            results.append(
+                SearchResult(
+                    id=self._ids[idx],
+                    score=max(0.0, min(1.0, 1.0 / (1.0 + float(dist)))),
+                    metadata=metadata,
+                )
+            )
         return results
 
     def delete(self, doc_ids: Iterable[str]) -> None:

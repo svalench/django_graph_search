@@ -35,10 +35,10 @@ class _Store:
 
 
 class _Embedding:
-    def embed(self, text):
+    def embed(self, text, *, is_query: bool = False):
         return [0.0]
 
-    def embed_batch(self, texts):
+    def embed_batch(self, texts, *, is_query: bool = False):
         return [[0.0] for _ in texts]
 
 

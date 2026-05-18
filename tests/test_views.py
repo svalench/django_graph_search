@@ -16,7 +16,7 @@ from django_graph_search.views import SearchAPIView, StreamingSearchAPIView
 def _minimal_graph_search(extra: Dict[str, Any] | None = None) -> Dict[str, Any]:
     base: Dict[str, Any] = {
         "MODELS": [],
-        "VECTOR_STORE": {"BACKEND": "django_graph_search.backends.ChromaDBBackend"},
+        "VECTOR_STORE": {"BACKEND": "tests.dummy_vector_backend.DummyVectorBackend"},
         "EMBEDDINGS": {
             "default": {
                 "BACKEND": "tests.dummy_embedding_backend.DummyEmbeddingBackend",
@@ -65,6 +65,48 @@ def test_search_get_negative_limit_returns_400(view_settings):
     request = factory.get("/api/search/", {"q": "x", "limit": "-3"})
     response = SearchAPIView.as_view()(request)
     assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_search_get_min_score_filters_results(view_settings):
+    view_settings(_minimal_graph_search())
+    factory = RequestFactory()
+    request = factory.get("/api/search/", {"q": "x", "min_score": "0.75"})
+    with mock.patch("django_graph_search.views.Searcher") as sc:
+        sc.return_value.search.return_value = [
+            {"model": "test_app.Product", "pk": 1, "score": 0.9, "text": "a"},
+            {"model": "test_app.Product", "pk": 2, "score": 0.5, "text": "b"},
+        ]
+        response = SearchAPIView.as_view()(request)
+    assert response.status_code == 200
+    body = json.loads(response.content.decode())
+    assert body["total"] == 1
+    assert body["results"][0]["pk"] == 1
+    assert body["min_score_applied"] == 0.75
+
+
+@pytest.mark.django_db
+def test_search_get_min_score_out_of_range_returns_400(view_settings):
+    view_settings(_minimal_graph_search())
+    factory = RequestFactory()
+    request = factory.get("/api/search/", {"q": "x", "min_score": "1.5"})
+    response = SearchAPIView.as_view()(request)
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_search_get_without_min_score_omits_applied_field(view_settings):
+    view_settings(_minimal_graph_search())
+    factory = RequestFactory()
+    request = factory.get("/api/search/", {"q": "x"})
+    with mock.patch("django_graph_search.views.Searcher") as sc:
+        sc.return_value.search.return_value = [
+            {"model": "test_app.Product", "pk": 1, "score": 0.2, "text": ""},
+        ]
+        response = SearchAPIView.as_view()(request)
+    assert response.status_code == 200
+    body = json.loads(response.content.decode())
+    assert "min_score_applied" not in body
 
 
 @pytest.mark.django_db

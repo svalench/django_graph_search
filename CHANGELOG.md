@@ -7,6 +7,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **REST search:** each hit includes ``score`` (0.0–1.0) and ``text``; optional query param
+  ``min_score`` filters weak matches; response may include ``min_score_applied``.
+- **Model weights:** ``weight_fields`` is always parsed (including with ``fields: "__all__"``);
+  weight ``0.0`` excludes a field from indexed text.
+- **Async indexing:** ``ASYNC_INDEXING`` settings (Celery / daemon thread / django-q) plus
+  ``django_graph_search.tasks`` helpers so ``AUTO_INDEX`` signals can avoid blocking requests.
+- **pgvector backend:** ``django_graph_search.backends.PgvectorBackend`` (extra ``[pgvector]``).
+- **Cloud embeddings:** ``OpenAIEmbeddingBackend`` and ``CohereEmbeddingBackend`` (extras
+  ``[openai]``, ``[cohere]``); Cohere distinguishes query vs document embeddings via ``is_query``.
+
+### Changed
+- **Vector scores:** ChromaDB / FAISS / Qdrant backends normalize stored distances into
+  similarity-style scores in the 0–1 range for consistent API output.
+
 ### Security
 - **REST API access control:** new optional ``GRAPH_SEARCH["API"]`` settings
   (``PERMISSION_CLASSES``, ``THROTTLE_CLASSES``, ``THROTTLE_RATES``,
@@ -20,6 +35,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   warning in logs.
 
 ### Fixed
+- **ChromaDB:** cosine collections use ``hnsw:space=cosine`` metadata; query distances mapped to similarity.
 - **File delta cache TTL:** ``FileDeltaCache`` now stores ``expires_at``,
   enforces expiry on read (lazy delete), and supports ``purge_expired(dry_run=)``
   plus the ``purge_search_cache`` management command for file backends.

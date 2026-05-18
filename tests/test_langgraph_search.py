@@ -102,11 +102,11 @@ class StubEmbeddingBackend:
     def __init__(self, queries: List[str]):
         self.index = {q: i for i, q in enumerate(queries)}
 
-    def embed(self, text: str):
+    def embed(self, text: str, *, is_query: bool = False):
         return [self.index.get(text, 0)]
 
-    def embed_batch(self, texts):
-        return [self.embed(t) for t in texts]
+    def embed_batch(self, texts, *, is_query: bool = False):
+        return [self.embed(t, is_query=is_query) for t in texts]
 
 
 def _make_config(*, langgraph: LangGraphConfig) -> GraphSearchConfig:

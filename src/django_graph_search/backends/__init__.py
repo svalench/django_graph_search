@@ -1,6 +1,7 @@
 from .base import BaseVectorStore, Document, SearchResult
 from .chromadb import ChromaDBBackend
 from .faiss import FaissBackend
+from .pgvector import PgvectorBackend
 from .qdrant import QdrantBackend
 
 __all__ = [
@@ -9,6 +10,7 @@ __all__ = [
     "SearchResult",
     "ChromaDBBackend",
     "FaissBackend",
+    "PgvectorBackend",
     "QdrantBackend",
 ]
 

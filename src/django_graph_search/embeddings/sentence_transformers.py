@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, List, Optional
+from typing import Iterable, List
 
 from ..exceptions import BackendError
 from .base import BaseEmbeddingBackend
@@ -22,11 +22,11 @@ class SentenceTransformerBackend(BaseEmbeddingBackend):
         self._model = SentenceTransformer(self.model_name, **self.options)
         return self._model
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str, *, is_query: bool = False) -> List[float]:
         model = self._get_model()
         return model.encode(text, convert_to_numpy=True).tolist()
 
-    def embed_batch(self, texts: Iterable[str]) -> List[List[float]]:
+    def embed_batch(self, texts: Iterable[str], *, is_query: bool = False) -> List[List[float]]:
         model = self._get_model()
         return model.encode(list(texts), convert_to_numpy=True).tolist()
 

@@ -69,7 +69,11 @@ class QdrantBackend(BaseVectorStore):
             query_filter=query_filter,
         )
         return [
-            SearchResult(id=str(item.id), score=float(item.score), metadata=item.payload or {})
+            SearchResult(
+                id=str(item.id),
+                score=max(0.0, min(1.0, float(item.score))),
+                metadata=item.payload or {},
+            )
             for item in results
         ]
 

@@ -34,7 +34,14 @@ pip install django-graph-search[faiss]
 # Qdrant backend (production, scalable)
 pip install django-graph-search[qdrant]
 
-# All backends
+# pgvector (PostgreSQL extension)
+pip install django-graph-search[pgvector]
+
+# OpenAI / Cohere cloud embeddings (no local PyTorch model)
+pip install django-graph-search[openai]
+pip install django-graph-search[cohere]
+
+# All backends + LangGraph
 pip install django-graph-search[all]
 ```
 
@@ -62,8 +69,9 @@ GRAPH_SEARCH = {
             "follow_relations": True,
             "relation_depth": 2,
         },
-        # Or index all concrete fields:
-        # {"model": "shop.Review", "fields": "__all__"}
+        # Or index all concrete fields (weight_fields still apply by field name):
+        # {"model": "shop.Review", "fields": "__all__",
+        #  "weight_fields": {"title": 2.0, "body": 1.0, "internal_note": 0.0}},
     ],
     "VECTOR_STORE": {
         "BACKEND": "django_graph_search.backends.ChromaDBBackend",
@@ -121,7 +129,7 @@ python manage.py build_search_index
 
 ```bash
 # REST API
-GET /api/search/?q=wireless+headphones&models=shop.Product&limit=5
+GET /api/search/?q=wireless+headphones&models=shop.Product&limit=5&min_score=0.75
 
 # Find similar items
 GET /api/search/similar/shop.Product/42/?limit=5
@@ -167,11 +175,15 @@ similar = get_similar(product_instance, limit=5)
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/search/?q=...&models=...&limit=...` | `GET` | Semantic full-text search |
+| `/api/search/?q=...&models=...&limit=...&min_score=...` | `GET` | Semantic search; optional `min_score` (0.0–1.0) drops weaker hits |
 | `/api/search/similar/{app}.{Model}/{id}/` | `GET` | Find similar objects |
 | `/api/search/conversation/` | `POST` | Session-aware conversational search (optional, see below) |
 | `/api/search/conversation/?conversation_id=...` | `DELETE` | Clear a conversation history |
 | `/api/search/stream/` | `GET`, `POST` | Streaming search events (optional) |
+
+Each result object includes **`model`**, **`pk`**, **`score`** (0.0–1.0 similarity), and **`text`**
+(the indexed document string). When `min_score` is used, the response also contains
+**`min_score_applied`**.
 
 ### Query parameters (`limit`)
 
@@ -180,6 +192,7 @@ The `limit` parameter controls how many results are returned (where supported):
 | Where | Parameter |
 |---|---|
 | `/api/search/` | Query string `limit` |
+| `/api/search/` | Query string `min_score` (optional, float 0.0–1.0) |
 | `/api/search/similar/.../` | Query string `limit` |
 | `/api/search/stream/` | Query string or JSON/form body `limit` |
 | `/api/search/conversation/` | JSON/form field `limit` |
@@ -190,7 +203,34 @@ Rules:
   are **clamped to 1000** and a warning is logged.
 - Invalid values (non-numeric strings, negative numbers, booleans, etc.) produce
   **HTTP 400** with JSON `{"error": "'limit' must be a positive integer."}`.
-- If `limit` is omitted, the server uses `DEFAULT_RESULTS_LIMIT` from settings (or equivalent defaults per view).
+- If `min_score` is set on **`/api/search/`**, only results with **`score >= min_score`**
+  are returned. The JSON body includes **`min_score_applied`** with the threshold used.
+  Invalid values return **HTTP 400**.
+
+### Optional embedding backends (OpenAI / Cohere)
+
+Instead of downloading a **sentence-transformers** model, you can point ``EMBEDDINGS`` at
+``django_graph_search.embeddings.OpenAIEmbeddingBackend`` or
+``django_graph_search.embeddings.CohereEmbeddingBackend`` (extras ``[openai]`` / ``[cohere]``).
+Cohere uses asymmetric ``input_type``: indexing uses document mode and search uses query mode
+(``embed_batch(..., is_query=False)`` vs ``embed(..., is_query=True)``).
+
+### Async indexing from signals (optional)
+
+When ``AUTO_INDEX`` is on, saves can block on large graphs. Enable ``ASYNC_INDEXING`` to offload work:
+
+```python
+"ASYNC_INDEXING": {
+    "ENABLED": True,
+    "BACKEND": "celery",  # or "thread" | "django_q"
+    "CELERY_QUEUE": "search_indexing",
+    "CELERY_TASK_PATH": "django_graph_search.tasks.index_instance_task",
+    "CELERY_DELETE_TASK_PATH": "django_graph_search.tasks.delete_instance_task",
+},
+```
+
+With ``thread``, indexing runs in a daemon thread (no retries). With ``celery``, install Celery
+and register tasks; if Celery is missing, the task module falls back to synchronous execution with a warning.
 
 ### Securing the REST API (optional)
 
@@ -248,6 +288,9 @@ After installation, navigate to `/admin/graph-search/` for a semantic search int
 | ChromaDB | Development, small-medium datasets | No |
 | FAISS | High-speed CPU search, offline | No |
 | Qdrant | Production, large datasets, filtering | Yes |
+| **pgvector** (`django_graph_search.backends.PgvectorBackend`) | Same PostgreSQL as Django, no separate vector server | PostgreSQL + `vector` extension |
+
+Install: `pip install django-graph-search[pgvector]`. Table is created automatically on first use (see backend docstring for `VECTOR_STORE.OPTIONS`).
 
 ## Delta Indexing & Cache
 
