@@ -185,8 +185,7 @@ def _parse_rate(rate: str) -> Tuple[int, float]:
             "minute": 60.0,
             "hour": 3600.0,
         }.get(unit, 60.0)
-        if num < 1:
-            num = 1
+        num = max(num, 1)
         return num, period
     except (ValueError, AttributeError):
         log.warning("Invalid THROTTLE_RATES entry %r — ignoring.", rate)

@@ -34,8 +34,8 @@ def _minimal_graph_search(extra: Dict[str, Any] | None = None) -> Dict[str, Any]
     return base
 
 
-@pytest.fixture
-def api_settings():
+@pytest.fixture(name="apply_api_settings")
+def _apply_api_settings_fixture():
     original = getattr(django_settings, "GRAPH_SEARCH", None)
     get_settings.cache_clear()
     SimpleScopedRateThrottle._windows.clear()
@@ -65,15 +65,15 @@ def allow_permission(request):
     return True
 
 
-def test_check_permissions_empty_allows(api_settings):
-    cfg = api_settings(_minimal_graph_search())
+def test_check_permissions_empty_allows(apply_api_settings):
+    cfg = apply_api_settings(_minimal_graph_search())
     factory = RequestFactory()
     request = factory.get("/api/search/", {"q": "x"})
     check_permissions(request, cfg)
 
 
-def test_check_permissions_callable_deny(api_settings):
-    cfg = api_settings(
+def test_check_permissions_callable_deny(apply_api_settings):
+    cfg = apply_api_settings(
         _minimal_graph_search(
             {"API": {"PERMISSION_CLASSES": ["tests.test_permissions.deny_permission"]}}
         )
@@ -84,8 +84,8 @@ def test_check_permissions_callable_deny(api_settings):
         check_permissions(request, cfg)
 
 
-def test_check_permissions_callable_allow(api_settings):
-    cfg = api_settings(
+def test_check_permissions_callable_allow(apply_api_settings):
+    cfg = apply_api_settings(
         _minimal_graph_search(
             {"API": {"PERMISSION_CLASSES": ["tests.test_permissions.allow_permission"]}}
         )
@@ -95,15 +95,15 @@ def test_check_permissions_callable_allow(api_settings):
     check_permissions(request, cfg)
 
 
-def test_check_throttle_skipped_when_no_classes(api_settings):
-    cfg = api_settings(_minimal_graph_search())
+def test_check_throttle_skipped_when_no_classes(apply_api_settings):
+    cfg = apply_api_settings(_minimal_graph_search())
     factory = RequestFactory()
     request = factory.get("/api/search/", {"q": "x"})
     check_throttle(request, cfg)
 
 
-def test_simple_scoped_throttle_blocks_second_request(api_settings):
-    cfg = api_settings(
+def test_simple_scoped_throttle_blocks_second_request(apply_api_settings):
+    cfg = apply_api_settings(
         _minimal_graph_search(
             {
                 "API": {
@@ -124,10 +124,10 @@ def test_simple_scoped_throttle_blocks_second_request(api_settings):
 
 
 @pytest.mark.django_db
-def test_search_api_view_returns_403_when_permission_denied(api_settings):
+def test_search_api_view_returns_403_when_permission_denied(apply_api_settings):
     from django_graph_search.views import SearchAPIView
 
-    api_settings(
+    apply_api_settings(
         _minimal_graph_search(
             {"API": {"PERMISSION_CLASSES": ["tests.test_permissions.deny_permission"]}}
         )

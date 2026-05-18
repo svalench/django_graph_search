@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import queue
 import threading
 import uuid
@@ -87,47 +88,43 @@ def _parse_float_param(
     Returns:
         Кортеж ``(parsed, None)`` при успехе или ``(None, JsonResponse)`` при ошибке.
     """
+    bad = JsonResponse(
+        {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
+        status=400,
+    )
+    out: Optional[float] = None
+    err: Optional[JsonResponse] = None
+
     if value is None or value == "":
-        return default, None
-    if isinstance(value, bool):
-        return None, JsonResponse(
-            {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
-            status=400,
-        )
-    if isinstance(value, (int, float)):
-        parsed = float(value)
+        out = default
+    elif isinstance(value, bool):
+        err = bad
+    elif isinstance(value, (int, float)):
+        out = float(value)
     elif isinstance(value, str):
         stripped = value.strip()
         if not stripped:
-            return default, None
-        try:
-            parsed = float(stripped)
-        except ValueError:
-            return None, JsonResponse(
-                {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
-                status=400,
-            )
+            out = default
+        else:
+            try:
+                out = float(stripped)
+            except ValueError:
+                err = bad
     else:
-        return None, JsonResponse(
-            {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
-            status=400,
-        )
-    if parsed != parsed:  # NaN
-        return None, JsonResponse(
-            {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
-            status=400,
-        )
-    if min_value is not None and parsed < min_value:
-        return None, JsonResponse(
-            {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
-            status=400,
-        )
-    if max_value is not None and parsed > max_value:
-        return None, JsonResponse(
-            {"error": f"'{param_name}' must be a float between 0.0 and 1.0."},
-            status=400,
-        )
-    return parsed, None
+        err = bad
+
+    if err is None and out is not None:
+        if math.isnan(out):
+            err = bad
+            out = None
+        elif min_value is not None and out < min_value:
+            err = bad
+            out = None
+        elif max_value is not None and out > max_value:
+            err = bad
+            out = None
+
+    return out, err
 
 
 def _stringify_numeric_param(
@@ -144,31 +141,32 @@ def _stringify_numeric_param(
     Returns:
         ``(строка_цифр_или_None, None)`` либо ``(None, JsonResponse)``.
     """
-    if value is None or value == "":
-        return None, None
-    if isinstance(value, bool):
-        return None, JsonResponse(
-            {"error": f"'{param_name}' must be a positive integer."},
-            status=400,
-        )
-    if isinstance(value, int):
-        return str(value), None
-    if isinstance(value, float):
-        if not value.is_integer():
-            return None, JsonResponse(
-                {"error": f"'{param_name}' must be a positive integer."},
-                status=400,
-            )
-        return str(int(value)), None
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return None, None
-        return stripped, None
-    return None, JsonResponse(
+    invalid = JsonResponse(
         {"error": f"'{param_name}' must be a positive integer."},
         status=400,
     )
+    out: Optional[str] = None
+    err: Optional[JsonResponse] = None
+
+    if value is None or value == "":
+        pass
+    elif isinstance(value, bool):
+        err = invalid
+    elif isinstance(value, int):
+        out = str(value)
+    elif isinstance(value, float):
+        if not value.is_integer():
+            err = invalid
+        else:
+            out = str(int(value))
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            out = stripped
+    else:
+        err = invalid
+
+    return out, err
 
 
 class SearchPermissionMixin:
@@ -442,10 +440,20 @@ class StreamingSearchAPIView(SearchPermissionMixin, View):
     marker.
     """
 
-    def get(self, request: HttpRequest, *args: Any, **kwargs: Any) -> StreamingHttpResponse | JsonResponse:
+    def get(
+        self,
+        request: HttpRequest,
+        *args: Any,
+        **kwargs: Any,
+    ) -> StreamingHttpResponse | JsonResponse:
         return self._handle(request)
 
-    def post(self, request: HttpRequest, *args: Any, **kwargs: Any) -> StreamingHttpResponse | JsonResponse:
+    def post(
+        self,
+        request: HttpRequest,
+        *args: Any,
+        **kwargs: Any,
+    ) -> StreamingHttpResponse | JsonResponse:
         return self._handle(request)
 
     def _handle(self, request: HttpRequest) -> StreamingHttpResponse | JsonResponse:
@@ -557,12 +565,24 @@ class StreamingSearchAPIView(SearchPermissionMixin, View):
 def _format_event(event: Dict[str, Any], fmt: str) -> bytes:
     payload = json.dumps(event, ensure_ascii=False, default=str)
     if fmt == "sse":
-        return f"event: {event.get('type', 'message')}\ndata: {payload}\n\n".encode("utf-8")
+        event_type = event.get("type", "message")
+        lines = (
+            f"event: {event_type}\n"
+            f"data: {payload}\n\n"
+        )
+        return lines.encode("utf-8")
     return (payload + "\n").encode("utf-8")
 
 
 class SimilarAPIView(View):
-    def get(self, request: HttpRequest, model: str, pk: str, *args: Any, **kwargs: Any) -> JsonResponse:
+    def get(
+        self,
+        request: HttpRequest,
+        model: str,
+        pk: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> JsonResponse:
         if "." not in model:
             return JsonResponse({"error": "Model must be in 'app.Model' format."}, status=400)
         app_label, model_name = model.split(".", 1)

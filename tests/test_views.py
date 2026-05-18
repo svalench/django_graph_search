@@ -29,8 +29,8 @@ def _minimal_graph_search(extra: Dict[str, Any] | None = None) -> Dict[str, Any]
     return base
 
 
-@pytest.fixture
-def view_settings():
+@pytest.fixture(name="apply_view_settings")
+def _apply_view_settings_fixture():
     original = getattr(django_settings, "GRAPH_SEARCH", None)
     get_settings.cache_clear()
 
@@ -48,8 +48,8 @@ def view_settings():
 
 
 @pytest.mark.django_db
-def test_search_get_bad_limit_returns_400(view_settings):
-    view_settings(_minimal_graph_search())
+def test_search_get_bad_limit_returns_400(apply_view_settings):
+    apply_view_settings(_minimal_graph_search())
     factory = RequestFactory()
     request = factory.get("/api/search/", {"q": "x", "limit": "abc"})
     with mock.patch("django_graph_search.views.Searcher") as sc:
@@ -59,8 +59,8 @@ def test_search_get_bad_limit_returns_400(view_settings):
 
 
 @pytest.mark.django_db
-def test_search_get_negative_limit_returns_400(view_settings):
-    view_settings(_minimal_graph_search())
+def test_search_get_negative_limit_returns_400(apply_view_settings):
+    apply_view_settings(_minimal_graph_search())
     factory = RequestFactory()
     request = factory.get("/api/search/", {"q": "x", "limit": "-3"})
     response = SearchAPIView.as_view()(request)
@@ -68,8 +68,8 @@ def test_search_get_negative_limit_returns_400(view_settings):
 
 
 @pytest.mark.django_db
-def test_search_get_min_score_filters_results(view_settings):
-    view_settings(_minimal_graph_search())
+def test_search_get_min_score_filters_results(apply_view_settings):
+    apply_view_settings(_minimal_graph_search())
     factory = RequestFactory()
     request = factory.get("/api/search/", {"q": "x", "min_score": "0.75"})
     with mock.patch("django_graph_search.views.Searcher") as sc:
@@ -86,8 +86,8 @@ def test_search_get_min_score_filters_results(view_settings):
 
 
 @pytest.mark.django_db
-def test_search_get_min_score_out_of_range_returns_400(view_settings):
-    view_settings(_minimal_graph_search())
+def test_search_get_min_score_out_of_range_returns_400(apply_view_settings):
+    apply_view_settings(_minimal_graph_search())
     factory = RequestFactory()
     request = factory.get("/api/search/", {"q": "x", "min_score": "1.5"})
     response = SearchAPIView.as_view()(request)
@@ -95,8 +95,8 @@ def test_search_get_min_score_out_of_range_returns_400(view_settings):
 
 
 @pytest.mark.django_db
-def test_search_get_without_min_score_omits_applied_field(view_settings):
-    view_settings(_minimal_graph_search())
+def test_search_get_without_min_score_omits_applied_field(apply_view_settings):
+    apply_view_settings(_minimal_graph_search())
     factory = RequestFactory()
     request = factory.get("/api/search/", {"q": "x"})
     with mock.patch("django_graph_search.views.Searcher") as sc:
@@ -110,11 +110,11 @@ def test_search_get_without_min_score_omits_applied_field(view_settings):
 
 
 @pytest.mark.django_db
-def test_streaming_returns_429_when_throttled(view_settings):
+def test_streaming_returns_429_when_throttled(apply_view_settings):
     from django_graph_search.permissions import SimpleScopedRateThrottle
 
     SimpleScopedRateThrottle._windows.clear()
-    view_settings(
+    apply_view_settings(
         _minimal_graph_search(
             {
                 "STREAMING": {"ENABLED": True},
@@ -143,10 +143,10 @@ def test_streaming_returns_429_when_throttled(view_settings):
 
 
 @pytest.mark.django_db
-def test_conversational_bad_limit_json_returns_400(view_settings):
+def test_conversational_bad_limit_json_returns_400(apply_view_settings):
     from django_graph_search.views import ConversationalSearchAPIView
 
-    view_settings(
+    apply_view_settings(
         _minimal_graph_search({"CONVERSATIONAL": {"ENABLED": True}}),
     )
     factory = RequestFactory()

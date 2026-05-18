@@ -34,8 +34,8 @@ def _minimal_graph_search(extra: Dict[str, Any] | None = None) -> Dict[str, Any]
     return base
 
 
-@pytest.fixture
-def conv_settings():
+@pytest.fixture(name="apply_conv_settings")
+def _apply_conv_settings_fixture():
     original = getattr(django_settings, "GRAPH_SEARCH", None)
     original_debug = django_settings.DEBUG
     get_settings.cache_clear()
@@ -58,8 +58,8 @@ def conv_settings():
 
 
 @pytest.mark.django_db
-def test_inmemory_emits_runtime_warning_when_not_debug(conv_settings):
-    conv_settings(_minimal_graph_search(), debug=False)
+def test_inmemory_emits_runtime_warning_when_not_debug(apply_conv_settings):
+    apply_conv_settings(_minimal_graph_search(), debug=False)
     factory = RequestFactory()
     request = factory.post(
         "/api/search/conversation/",
@@ -78,8 +78,8 @@ def test_inmemory_emits_runtime_warning_when_not_debug(conv_settings):
 
 
 @pytest.mark.django_db
-def test_inmemory_no_warning_in_debug(conv_settings):
-    conv_settings(_minimal_graph_search(), debug=True)
+def test_inmemory_no_warning_in_debug(apply_conv_settings):
+    apply_conv_settings(_minimal_graph_search(), debug=True)
     factory = RequestFactory()
     request = factory.post(
         "/api/search/conversation/",
@@ -91,5 +91,10 @@ def test_inmemory_no_warning_in_debug(conv_settings):
         with mock.patch("django_graph_search.views.Searcher") as sc:
             sc.return_value.search.return_value = []
             ConversationalSearchAPIView.as_view()(request)
-    runtime = [w for w in wrec if issubclass(w.category, RuntimeWarning) and "inmemory" in str(w.message)]
+    runtime = [
+        w
+        for w in wrec
+        if issubclass(w.category, RuntimeWarning)
+        and "inmemory" in str(w.message)
+    ]
     assert not runtime

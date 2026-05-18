@@ -121,9 +121,14 @@ else:
         )
         index_instance_task_fn(app_label, model_name, pk)
 
-    def delete_instance_task(app_label: str, model_name: str, pk: Any) -> None:  # type: ignore[misc]
+    def delete_instance_task(  # type: ignore[misc]
+        app_label: str, model_name: str, pk: Any
+    ) -> None:
         log.warning(
-            "Celery not installed. Falling back to sync delete index for %s.%s pk=%s",
+            (
+                "Celery not installed. Falling back to sync delete index "
+                "for %s.%s pk=%s"
+            ),
             app_label,
             model_name,
             pk,

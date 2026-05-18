@@ -361,7 +361,9 @@ def _build_async_indexing_config(payload: Dict[str, Any]) -> AsyncIndexingConfig
     merged = _merge_dicts(defaults, payload)
     backend = str(merged.get("BACKEND") or "celery").lower()
     if backend not in {"celery", "django_q", "thread"}:
-        raise ConfigurationError("ASYNC_INDEXING.BACKEND must be 'celery', 'django_q', or 'thread'.")
+        raise ConfigurationError(
+            "ASYNC_INDEXING.BACKEND must be 'celery', 'django_q', or 'thread'."
+        )
     task_path = merged.get("CELERY_TASK_PATH") or defaults["CELERY_TASK_PATH"]
     if not isinstance(task_path, str):
         raise ConfigurationError("ASYNC_INDEXING.CELERY_TASK_PATH must be a string.")

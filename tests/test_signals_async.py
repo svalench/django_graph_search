@@ -13,8 +13,8 @@ from django_graph_search.settings import get_settings
 from .test_app.models import Category, Product
 
 
-@pytest.fixture
-def graph_search_signal_settings():
+@pytest.fixture(name="graph_search_signal_settings")
+def _graph_search_signal_settings_fixture():
     original = getattr(django_settings, "GRAPH_SEARCH", None)
     get_settings.cache_clear()
 

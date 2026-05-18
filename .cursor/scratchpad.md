@@ -1,5 +1,5 @@
 # Scratchpad
 
-PART 2: weight_fields/__all__, min_score+score+text, ASYNC_INDEXING+tasks, pgvector, OpenAI/Cohere embeddings, docs, tests.
+Pylint CI: `_parse_float_param` один return + `math.isnan`; `_stringify_numeric_param`; переносы строк в views; фикстуры через `fixture(name=...)` (W0621); pgvector/settings/tasks длина строк; `tasks.delete_instance_task` сигнатура.
 
-DONE
+DONE — `pylint $(git ls-files '*.py')` 10/10; pytest по затронутым модулям 16 passed. Полный pytest: 2 fail в `test_langgraph_search` (Searcher + LANGGRAPH), вне этого PR.

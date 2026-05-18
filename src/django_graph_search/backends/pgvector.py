@@ -160,7 +160,10 @@ class PgvectorBackend(BaseVectorStore):
         results: List[SearchResult] = []
         for row in rows:
             doc_id, metadata_raw, score = row
-            meta = metadata_raw if isinstance(metadata_raw, dict) else json.loads(metadata_raw or "{}")
+            if isinstance(metadata_raw, dict):
+                meta = metadata_raw
+            else:
+                meta = json.loads(metadata_raw or "{}")
             s = max(0.0, min(1.0, float(score)))
             results.append(SearchResult(id=str(doc_id), score=s, metadata=meta))
         return results
