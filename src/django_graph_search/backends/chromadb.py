@@ -90,3 +90,10 @@ class ChromaDBBackend(BaseVectorStore):
     def clear_collection(self) -> None:
         self.collection.delete(where={})
 
+    def count_documents(self, filters: Optional[Dict[str, Any]] = None) -> int:
+        if filters:
+            data = self.collection.get(where=filters, include=[])
+            ids = data.get("ids") or []
+            return len(ids)
+        return int(self.collection.count())
+

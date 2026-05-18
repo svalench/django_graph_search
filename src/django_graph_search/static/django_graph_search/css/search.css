@@ -2,6 +2,10 @@
   max-width: 960px;
 }
 
+.graph-search__nav {
+  margin-bottom: 12px;
+}
+
 .graph-search__form {
   margin-bottom: 16px;
 }

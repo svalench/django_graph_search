@@ -7,6 +7,9 @@
 
 {% block content %}
   <div class="graph-search">
+    <nav class="graph-search__nav">
+      <a href="{% url 'admin:graph-search-index-status' %}">Статус индексации</a>
+    </nav>
     <h1>Graph Search</h1>
     <form method="get" class="graph-search__form">
       <div class="graph-search__row">

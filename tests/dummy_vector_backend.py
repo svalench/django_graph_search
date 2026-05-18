@@ -11,9 +11,10 @@ class DummyVectorBackend(BaseVectorStore):
 
     def __init__(self, **options: Any) -> None:
         del options
+        self._documents: List[Document] = []
 
     def add_documents(self, documents: Iterable[Document]) -> None:
-        list(documents)
+        self._documents.extend(list(documents))
 
     def search(
         self,
@@ -25,7 +26,17 @@ class DummyVectorBackend(BaseVectorStore):
         return []
 
     def delete(self, doc_ids: Iterable[str]) -> None:
-        del doc_ids
+        drop = set(doc_ids)
+        self._documents = [d for d in self._documents if d.id not in drop]
 
     def clear_collection(self) -> None:
-        return
+        self._documents.clear()
+
+    def count_documents(self, filters: Optional[Dict[str, Any]] = None) -> int:
+        if not filters:
+            return len(self._documents)
+        return sum(
+            1
+            for d in self._documents
+            if all(d.metadata.get(k) == v for k, v in filters.items())
+        )

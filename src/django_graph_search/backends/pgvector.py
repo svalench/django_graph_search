@@ -184,3 +184,18 @@ class PgvectorBackend(BaseVectorStore):
         conn = connections[self.using]
         with conn.cursor() as cursor:
             cursor.execute(f"DELETE FROM {tbl};")
+
+    def count_documents(self, filters: Optional[Dict[str, Any]] = None) -> int:
+        self._ensure_table()
+        tbl = self.table_name
+        conn = connections[self.using]
+        if filters:
+            sql = f"SELECT COUNT(*) FROM {tbl} WHERE metadata @> %s::jsonb"
+            params: List[Any] = [json.dumps(filters)]
+        else:
+            sql = f"SELECT COUNT(*) FROM {tbl}"
+            params = []
+        with conn.cursor() as cursor:
+            cursor.execute(sql, params)
+            row = cursor.fetchone()
+        return int(row[0]) if row else 0
