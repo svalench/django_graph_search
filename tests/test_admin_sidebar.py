@@ -1,4 +1,5 @@
 """Раздел django_graph_search в сайдбаре Django Admin."""
+# pylint: disable=redefined-outer-name
 from __future__ import annotations
 
 from types import ModuleType

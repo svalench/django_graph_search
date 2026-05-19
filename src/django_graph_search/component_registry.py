@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import json
 import threading
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from django.utils.module_loading import import_string
 
-from .graph_resolver import GraphResolver
-from .settings import GraphSearchConfig, get_settings
+if TYPE_CHECKING:
+    from .settings import GraphSearchConfig
 
 # Один vector store + embedding + resolver на процесс (как memory backend в views).
 _registry_lock = threading.Lock()
-_component_registry: Dict[Tuple[Any, ...], Tuple[Any, Any, GraphResolver]] = {}
+_component_registry: Dict[Tuple[Any, ...], Tuple[Any, Any, Any]] = {}
 
 
 def _freeze_options(options: Dict[str, Any]) -> str:
@@ -19,7 +19,7 @@ def _freeze_options(options: Dict[str, Any]) -> str:
 
 
 def _component_cache_key(
-    config: GraphSearchConfig,
+    config: "GraphSearchConfig",
     embedding_profile: Optional[str],
 ) -> Tuple[Any, ...]:
     profile_name = embedding_profile or config.default_embedding
@@ -35,10 +35,13 @@ def _component_cache_key(
 
 
 def get_shared_components(
-    config: Optional[GraphSearchConfig] = None,
+    config: Optional["GraphSearchConfig"] = None,
     embedding_profile: Optional[str] = None,
-) -> Tuple[GraphSearchConfig, object, object, GraphResolver]:
+) -> Tuple["GraphSearchConfig", object, object, Any]:
     """Тяжёлые компоненты поиска/индексации — singleton на воркер."""
+    from .graph_resolver import GraphResolver
+    from .settings import get_settings
+
     config = config or get_settings()
     key = _component_cache_key(config, embedding_profile)
     with _registry_lock:

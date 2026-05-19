@@ -102,7 +102,7 @@ class ModelConfig:
     follow_relations: bool = True
     relation_depth: int = 2
     weight_fields: Dict[str, float] = field(default_factory=dict)
-    # Поля save(update_fields=...): если все в списке — post_save не индексирует (плюс глобальный список).
+    # save(update_fields=...): только эти поля — post_save не индексирует (+ глобальный список).
     skip_update_fields: Tuple[str, ...] = field(default_factory=tuple)
 
 

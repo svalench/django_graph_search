@@ -49,6 +49,7 @@ class Indexer(ComponentMixin):
     def __init__(
         self,
         config: Optional[GraphSearchConfig] = None,
+        *,
         vector_store=None,
         embedding_backend=None,
         resolver: Optional[GraphResolver] = None,
