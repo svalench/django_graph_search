@@ -9,31 +9,32 @@ single-query case (Sprint 1 backwards-compat guarantee).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
-from unittest import mock
+from typing import Any, Dict, List
 
 import pytest
 
 from django.conf import settings as django_settings
 
+from django_graph_search.backends.base import SearchResult
 from django_graph_search.langgraph_agent import (
     SearchState,
     analyze_query_node,
     expand_query_node,
     postprocess_results_node,
     rerank_results_node,
+    sort_vector_hits,
     vector_search_node,
 )
 from django_graph_search.llm import DummyLLMBackend
-from django_graph_search.llm.base import BaseLLMBackend, RerankCandidate
+from django_graph_search.llm.base import BaseLLMBackend
 from django_graph_search.searcher import Searcher
 from django_graph_search.settings import (
     CacheConfig,
     EmbeddingProfile,
     GraphSearchConfig,
     LangGraphConfig,
-    LLMConfig,
     VectorStoreConfig,
+    clear_graph_search_caches,
     get_settings,
 )
 
@@ -47,11 +48,11 @@ def graph_search_settings():
     before and after to stay isolated.
     """
     original = getattr(django_settings, "GRAPH_SEARCH", None)
-    get_settings.cache_clear()
+    clear_graph_search_caches()
 
     def _apply(payload):
         django_settings.GRAPH_SEARCH = payload
-        get_settings.cache_clear()
+        clear_graph_search_caches()
         return get_settings()
 
     yield _apply
@@ -61,7 +62,7 @@ def graph_search_settings():
             delattr(django_settings, "GRAPH_SEARCH")
     else:
         django_settings.GRAPH_SEARCH = original
-    get_settings.cache_clear()
+    clear_graph_search_caches()
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +210,73 @@ def test_vector_search_node_merges_and_dedupes():
         "test_app.Product:3",
     }
     assert pytest.approx([h.score for h in out["raw_results"]][0]) == 0.9
+
+
+def test_vector_search_merge_prefers_lower_distance_when_scores_equal():
+    """При одинаковом score оставляем hit с меньшим vector_distance."""
+    embed = StubEmbeddingBackend(["a", "b"])
+    store = StubVectorStore({
+        "a": [
+            FakeHit(
+                "test_app.Product:1",
+                0.5,
+                {"model": "test_app.Product", "pk": 1, "vector_distance": 2.0},
+            ),
+        ],
+        "b": [
+            FakeHit(
+                "test_app.Product:1",
+                0.5,
+                {"model": "test_app.Product", "pk": 1, "vector_distance": 0.25},
+            ),
+        ],
+    })
+    state: SearchState = {
+        "expanded_queries": ["a", "b"],
+        "limit": 10,
+        "models": None,
+    }
+    out = vector_search_node(state, embedding_backend=embed, vector_store=store)
+    hit = next(h for h in out["raw_results"] if h.id == "test_app.Product:1")
+    assert hit.metadata["vector_distance"] == 0.25
+
+
+def test_sort_vector_hits_breaks_score_ties_by_distance():
+    hits = [
+        FakeHit("b", 0.5, {"vector_distance": 1.0}),
+        FakeHit("a", 0.5, {"vector_distance": 0.5}),
+    ]
+    ordered = sort_vector_hits(hits)
+    assert [h.id for h in ordered] == ["a", "b"]
+
+
+def test_rerank_passes_indexed_text_from_metadata():
+    """SearchResult хранит текст в metadata['text'], не в атрибуте .text."""
+
+    class CaptureLLM(DummyLLMBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seen_texts: List[str] = []
+
+        def rerank(self, query, candidates, top_k=None):
+            self.seen_texts = [c.text for c in candidates]
+            return super().rerank(query, candidates, top_k=top_k)
+
+    llm = CaptureLLM()
+    candidates = [
+        SearchResult(
+            id="m::1",
+            score=0.5,
+            metadata={"model": "m", "pk": 1, "text": "indexed body"},
+        ),
+    ]
+    state: SearchState = {
+        "merged_results": candidates,
+        "normalized_query": "q",
+    }
+    cfg = _make_config(langgraph=LangGraphConfig(reranking=True, rerank_top_k=5))
+    rerank_results_node(state, config=cfg, llm=llm)
+    assert llm.seen_texts == ["indexed body"]
 
 
 def test_vector_search_node_filters_by_models():

@@ -22,7 +22,7 @@ from django_graph_search.memory import (
     InMemoryBackend,
     build_memory_backend,
 )
-from django_graph_search.settings import get_settings
+from django_graph_search.settings import clear_graph_search_caches, get_settings
 from django_graph_search.views import ConversationalSearchAPIView, _memory_backend_registry
 
 
@@ -34,13 +34,13 @@ from django_graph_search.views import ConversationalSearchAPIView, _memory_backe
 @pytest.fixture
 def graph_search_settings():
     original = getattr(django_settings, "GRAPH_SEARCH", None)
-    get_settings.cache_clear()
+    clear_graph_search_caches()
     # Сброс singleton бэкендов памяти между тестами
     _memory_backend_registry.clear()
 
     def _apply(payload):
         django_settings.GRAPH_SEARCH = payload
-        get_settings.cache_clear()
+        clear_graph_search_caches()
         return get_settings()
 
     yield _apply
@@ -49,7 +49,7 @@ def graph_search_settings():
         delattr(django_settings, "GRAPH_SEARCH")
     elif original is not None:
         django_settings.GRAPH_SEARCH = original
-    get_settings.cache_clear()
+    clear_graph_search_caches()
     _memory_backend_registry.clear()
 
 

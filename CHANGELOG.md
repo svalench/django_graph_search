@@ -7,6 +7,44 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-05-19
+
+Stable **0.3** release (replaces pre-releases `0.3.0a1` and `0.3.1a1`).
+
+```bash
+pip install django-graph-search==0.3.3
+```
+
+### Added
+- **REST search:** each hit includes `score` (0.0–1.0) and `text`; optional `min_score` filters weak matches; response may include `min_score_applied`.
+- **Model weights:** `weight_fields` is always parsed (including with `fields: "__all__"`); weight `0.0` excludes a field from indexed text.
+- **Async indexing:** `ASYNC_INDEXING` (Celery / daemon `thread` / django-q) plus `django_graph_search.tasks` so `AUTO_INDEX` signals can avoid blocking requests.
+- **Non-blocking auto-index (default):** with local SentenceTransformer embeddings, `AUTO_INDEX_NON_BLOCKING` runs indexing in a daemon thread without enabling `ASYNC_INDEXING`.
+- **Skip noisy saves:** global `AUTO_INDEX_SKIP_UPDATE_FIELDS` (default `last_login`) and per-model `skip_update_fields` skip re-index when only those fields change (`update_fields` or full save with no other diffs).
+- **Pgvector backend:** `django_graph_search.backends.PgvectorBackend` (extra `[pgvector]`).
+- **Cloud embeddings:** `OpenAIEmbeddingBackend` and `CohereEmbeddingBackend` (extras `[openai]`, `[cohere]`).
+- **Admin index coverage:** `/admin/graph-search/index-status/` shows DB row counts vs vector-store document counts per model, overall percentage, and static progress bars. Sidebar entries **Поиск** and **Статус индексации** via unmanaged models `GraphSearch` / `GraphSearchIndexStatus`.
+- **`count_documents(filters)`** on ChromaDB, FAISS, Qdrant, and pgvector backends; used by coverage UI and `search_index_status` management command.
+- **Admin search:** optional `min_score` query parameter on the Graph Search admin page (same semantics as REST).
+- **Component registry:** vector store, embedding backend, and `GraphResolver` are cached per worker configuration (shared by `Searcher`, `Indexer`, signals).
+
+### Changed
+- **Vector scores:** ChromaDB / FAISS / Qdrant normalize distances to similarity scores in 0–1; ChromaDB reads the collection’s effective HNSW `space` and maps L2 / cosine / inner-product distances accordingly.
+- **Factory / signals:** indexing and search reuse `get_shared_components()` from `component_registry`.
+
+### Security
+- **REST API access control:** optional `GRAPH_SEARCH["API"]` (`PERMISSION_CLASSES`, `THROTTLE_CLASSES`, `THROTTLE_RATES`, `REQUIRE_AUTHENTICATION`) via `django_graph_search.permissions`.
+- **Safe integer parsing for `limit`:** invalid or negative values return HTTP 400; values above 1000 are clamped with a log warning.
+
+### Fixed
+- **LangGraph + `graph.invoke()`:** when the compiled graph omits `final_results`, `Searcher` runs `postprocess_results_node` so results are not empty.
+- **ChromaDB:** cosine collections use `hnsw:space=cosine`; query distances mapped to similarity per metric.
+- **File delta cache TTL:** `FileDeltaCache` enforces expiry on read; `purge_expired(dry_run=)` and `purge_search_cache` management command.
+- **Conversational memory registry:** per-process backends with a lock; `RuntimeWarning` when `inmemory` + conversational enabled + `DEBUG` is false.
+
+### Tests
+- **117** tests passing (+59 vs 0.2.0): admin sidebar, Chroma score mapping, component registry, non-blocking signals, `skip_update_fields`.
+
 ## [0.3.1a1] — 2026-05-19
 
 **Pre-release** of the **0.3.1** line. Install for smoke tests:
@@ -202,6 +240,7 @@ and signal handlers behave exactly as before.
 - REST endpoints `/api/search/` and `/api/search/similar/<model>/<pk>/`.
 - `build_search_index` management command.
 
+[0.3.3]: https://github.com/svalench/django_graph_search/releases/tag/v0.3.3
 [0.3.1a1]: https://github.com/svalench/django_graph_search/releases/tag/v0.3.1a1
 [0.3.0a1]: https://github.com/svalench/django_graph_search/releases/tag/v0.3.0a1
 [0.2.0]: https://github.com/svalench/django_graph_search/releases/tag/v0.2.0

@@ -11,6 +11,7 @@ from django.urls import reverse
 from .components import ComponentMixin
 from .events import EventHub
 from .graph_resolver import GraphResolver
+from .langgraph_agent import sort_vector_hits
 from .llm import BaseLLMBackend, build_llm_backend
 from .settings import GraphSearchConfig, ModelConfig
 
@@ -96,6 +97,7 @@ class Searcher(ComponentMixin):
             limit=limit,
             filters={"model": instance._meta.label},
         )
+        results = sort_vector_hits(results)
         return [self._format_result(item) for item in results]
 
     # ----------------------------------------------------------- legacy path
@@ -113,6 +115,7 @@ class Searcher(ComponentMixin):
         if models:
             allowed = set(models)
             results = [item for item in results if item.metadata.get("model") in allowed]
+        results = sort_vector_hits(results)
         return [self._format_result(item) for item in results]
 
     # ---------------------------------------------------------- LangGraph path
@@ -175,11 +178,13 @@ class Searcher(ComponentMixin):
         score = float(raw_score) if raw_score is not None else 0.0
         score = max(0.0, min(1.0, score))
         text = item.metadata.get("text") or ""
+        preview = f"{text[:200]}…" if len(text) > 200 else (text or None)
         data = {
             "model": model_label,
             "pk": pk,
             "score": score,
             "text": text,
+            "text_preview": preview,
         }
         if model_label and pk is not None:
             model_cls = self._get_model_class(model_label)

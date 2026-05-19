@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from django.conf import settings as django_settings
 from django.utils.module_loading import import_string
@@ -27,6 +27,9 @@ DEFAULTS: Dict[str, Any] = {
     "API_URL_PREFIX": "api/search/",
     "ADMIN_SEARCH_ENABLED": True,
     "AUTO_INDEX": True,
+    "AUTO_INDEX_SKIP_UPDATE_FIELDS": ["last_login"],
+    # Локальный sentence-transformers не блокирует HTTP: индексация в daemon thread.
+    "AUTO_INDEX_NON_BLOCKING": True,
     "DEFAULT_RESULTS_LIMIT": 20,
     "RELATION_DEPTH_DEFAULT": 2,
     "DELTA_INDEXING": False,
@@ -99,6 +102,8 @@ class ModelConfig:
     follow_relations: bool = True
     relation_depth: int = 2
     weight_fields: Dict[str, float] = field(default_factory=dict)
+    # Поля save(update_fields=...): если все в списке — post_save не индексирует (плюс глобальный список).
+    skip_update_fields: Tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -203,6 +208,8 @@ class GraphSearchConfig:
     default_results_limit: int
     delta_indexing: bool
     cache: CacheConfig
+    auto_index_skip_update_fields: Tuple[str, ...] = ("last_login",)
+    auto_index_non_blocking: bool = True
     langgraph: LangGraphConfig = field(default_factory=LangGraphConfig)
     conversational: ConversationalConfig = field(default_factory=ConversationalConfig)
     smart_indexing: SmartIndexingConfig = field(default_factory=SmartIndexingConfig)
@@ -261,6 +268,12 @@ def _validate_models(models: Iterable[Dict[str, Any]], depth_default: int) -> Li
         relation_depth = int(item.get("relation_depth", depth_default))
         # Веса парсятся всегда, даже для fields == ["__all__"] (известные имена полей).
         weight_fields = _normalize_weight_fields(item.get("weight_fields", {}))
+        skip_raw = item.get("skip_update_fields")
+        skip_update_fields: Tuple[str, ...] = ()
+        if skip_raw is not None:
+            if not isinstance(skip_raw, (list, tuple)):
+                raise ConfigurationError("'skip_update_fields' must be a list of field names.")
+            skip_update_fields = tuple(str(f) for f in skip_raw)
         normalized.append(
             ModelConfig(
                 model=model,
@@ -268,6 +281,7 @@ def _validate_models(models: Iterable[Dict[str, Any]], depth_default: int) -> Li
                 follow_relations=follow_relations,
                 relation_depth=relation_depth,
                 weight_fields=weight_fields,
+                skip_update_fields=skip_update_fields,
             )
         )
     return normalized
@@ -327,6 +341,13 @@ def get_settings() -> GraphSearchConfig:
     streaming_cfg = _build_streaming_config(merged.get("STREAMING") or {})
     api_cfg = _build_api_config(merged.get("API") or {})
     async_indexing_cfg = _build_async_indexing_config(merged.get("ASYNC_INDEXING") or {})
+    skip_update_raw = merged.get("AUTO_INDEX_SKIP_UPDATE_FIELDS")
+    if skip_update_raw is None:
+        skip_update_fields: Tuple[str, ...] = ("last_login",)
+    elif not isinstance(skip_update_raw, (list, tuple)):
+        raise ConfigurationError("AUTO_INDEX_SKIP_UPDATE_FIELDS must be a list of field names.")
+    else:
+        skip_update_fields = tuple(str(f) for f in skip_update_raw)
 
     # Validate backend paths early
     _load_backend(vector_store.backend)
@@ -341,6 +362,8 @@ def get_settings() -> GraphSearchConfig:
         api_url_prefix=merged["API_URL_PREFIX"],
         admin_search_enabled=bool(merged["ADMIN_SEARCH_ENABLED"]),
         auto_index=bool(merged["AUTO_INDEX"]),
+        auto_index_skip_update_fields=skip_update_fields,
+        auto_index_non_blocking=bool(merged.get("AUTO_INDEX_NON_BLOCKING", True)),
         default_results_limit=int(merged["DEFAULT_RESULTS_LIMIT"]),
         delta_indexing=bool(merged.get("DELTA_INDEXING", False)),
         cache=cache_cfg,
@@ -515,4 +538,12 @@ def _build_conversational_config(payload: Dict[str, Any]) -> ConversationalConfi
             or "django_graph_search.langgraph_conversation.build_conversation_graph"
         ),
     )
+
+
+def clear_graph_search_caches() -> None:
+    """Сброс кэша настроек и реестра тяжёлых компонентов (для тестов и reload)."""
+    get_settings.cache_clear()
+    from .component_registry import clear_component_registry
+
+    clear_component_registry()
 

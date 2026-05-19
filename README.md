@@ -45,12 +45,12 @@ pip install django-graph-search[cohere]
 pip install django-graph-search[all]
 ```
 
-## What's new in 0.3 (pre-release **0.3.1a1**)
+## What's new in **0.3.3**
 
-This line is a **pre-release** for smoke-testing packaging and integrations. Install with:
+Stable **0.3** line. Install with:
 
 ```bash
-pip install --pre django-graph-search==0.3.1a1
+pip install django-graph-search==0.3.3
 ```
 
 Highlights vs **0.2.0** (full detail in [CHANGELOG.md](CHANGELOG.md)):
@@ -59,12 +59,13 @@ Highlights vs **0.2.0** (full detail in [CHANGELOG.md](CHANGELOG.md)):
 |------|--------|
 | **REST hits** | Each result includes `score` (0.0–1.0) and `text`. Optional `min_score` query parameter filters weak matches; responses may include `min_score_applied`. |
 | **Indexing** | `weight_fields` is always honored, including with `fields: "__all__"`; weight `0.0` drops a field from indexed text. |
-| **Async signals** | `ASYNC_INDEXING` (Celery, `thread`, or django-q) plus `django_graph_search.tasks` so `AUTO_INDEX` can avoid blocking the request thread. |
-| **Backends / embeddings** | **Pgvector** backend (`[pgvector]`). **OpenAI** / **Cohere** embedding backends (`[openai]`, `[cohere]`). |
-| **Scores** | ChromaDB / FAISS / Qdrant normalize distances to similarity scores in 0–1 for consistent API output. |
-| **Security / API** | Optional `GRAPH_SEARCH["API"]`: `PERMISSION_CLASSES`, `THROTTLE_CLASSES`, `THROTTLE_RATES`, `REQUIRE_AUTHENTICATION` via `django_graph_search.permissions` (defaults keep behaviour open). |
-| **Validation** | Invalid or negative `limit` on search, streaming, conversational, and similar endpoints returns **400** (not 500); values above 1000 are clamped with a log warning. |
-| **Fixes** | ChromaDB cosine metadata and distance mapping; file delta cache TTL and `purge_search_cache`; conversational in-memory registry + `RuntimeWarning` when `DEBUG` is false. |
+| **Async / non-blocking signals** | `ASYNC_INDEXING` (Celery, `thread`, django-q) or default `AUTO_INDEX_NON_BLOCKING` (daemon thread for local SentenceTransformer). `AUTO_INDEX_SKIP_UPDATE_FIELDS` / per-model `skip_update_fields` skip noisy saves (`last_login`, etc.). |
+| **Admin** | Sidebar **Поиск** and **Статус индексации**; index coverage page; `min_score` on admin search. |
+| **Backends / embeddings** | **Pgvector** (`[pgvector]`). **OpenAI** / **Cohere** (`[openai]`, `[cohere]`). Shared component registry per worker. |
+| **Scores** | ChromaDB / FAISS / Qdrant normalize distances to 0–1; Chroma respects collection metric (L2 / cosine / IP). |
+| **Security / API** | Optional `GRAPH_SEARCH["API"]`: permissions, throttling, `REQUIRE_AUTHENTICATION` (defaults stay open). |
+| **Validation** | Invalid `limit` → **400**; values above 1000 clamped with a log warning. |
+| **Fixes** | LangGraph empty `final_results`; Chroma metadata; delta cache TTL; conversational memory registry warning. |
 
 ## Quick Start (5 minutes)
 
@@ -127,6 +128,8 @@ GRAPH_SEARCH = {
 
 To restrict access to the main search, streaming, and conversational HTTP endpoints,
 add an `"API"` block as described [below](#securing-the-rest-api-optional).
+
+**Search relevance (semantic noise).** Vector search scores the full string built for indexing (all configured fields plus related rows when `follow_relations` is true). If results feel noisy or scores look flat, narrow `fields` to the attributes users actually query (e.g. `username`, `email`), set `follow_relations` / `relation_depth` lower, then rebuild the index. Admin Graph Search shows a **text preview** of indexed text per hit and supports optional **`min_score`** (same semantics as the REST API).
 
 ### 3. Add URLs
 
@@ -253,6 +256,45 @@ When ``AUTO_INDEX`` is on, saves can block on large graphs. Enable ``ASYNC_INDEX
 With ``thread``, indexing runs in a daemon thread (no retries). With ``celery``, install Celery
 and register tasks; if Celery is missing, the task module falls back to synchronous execution with a warning.
 
+### Production: zero impact on unrelated requests
+
+``AUTO_INDEX`` hooks **every** ``post_save`` for models listed in ``MODELS``. A login that updates
+``auth.User.last_login``, or any frequent save on an indexed model, can load a local
+**sentence-transformers** model and block the request thread for seconds.
+
+Recommended for production web workers:
+
+| Setting | Recommendation |
+|---------|----------------|
+| ``AUTO_INDEX`` | ``False`` if you rebuild with ``build_search_index`` or a Celery beat job |
+| ``ASYNC_INDEXING`` | ``ENABLED: True`` with ``thread`` or ``celery`` when ``AUTO_INDEX`` stays on |
+| ``MODELS`` | Do **not** index ``auth.User`` (or similar) unless you need user search; login saves are noisy |
+| ``EMBEDDINGS`` | Prefer ``OpenAIEmbeddingBackend`` / ``CohereEmbeddingBackend`` in Gunicorn workers to avoid PyTorch in-process |
+| ``AUTO_INDEX_SKIP_UPDATE_FIELDS`` | Default ``["last_login"]`` — skips indexing when ``save(update_fields=...)`` touches only those fields |
+| ``AUTO_INDEX_NON_BLOCKING`` | Default ``True`` — with local **SentenceTransformer**, signal indexing runs in a **daemon thread** so login/API are not blocked (model may still load in background) |
+
+Example minimal fix for login latency:
+
+```python
+GRAPH_SEARCH = {
+    "AUTO_INDEX": False,
+    # or keep AUTO_INDEX and offload:
+    # "ASYNC_INDEXING": {"ENABLED": True, "BACKEND": "thread"},
+    # "AUTO_INDEX_SKIP_UPDATE_FIELDS": ["last_login"],
+    "MODELS": [
+        # avoid auth.User unless required
+        {"model": "shop.Product", "fields": ["name", "description"]},
+    ],
+}
+```
+
+Heavy components (vector store client, embedding backend, graph resolver) are **cached once per
+worker process** after the first search or index operation. Restart workers after changing
+``GRAPH_SEARCH`` backends or embedding models.
+
+For local **sentence-transformers**, run indexing in a dedicated Celery worker if web workers
+must stay lean.
+
 ### Securing the REST API (optional)
 
 **Scope:** Settings under `GRAPH_SEARCH["API"]` apply only to **`GET /api/search/`**,
@@ -300,7 +342,16 @@ python manage.py purge_search_cache --dry-run        # Count expired entries wit
 
 ## Admin UI
 
-After installation, navigate to `/admin/graph-search/` for a semantic search interface directly in Django Admin — useful for content managers and debugging.
+With `django.contrib.admin` installed, the app adds a **Django Graph Search** section on the admin index (`/admin/`) with **Поиск** and **Статус индексации** entries. The legacy URL `/admin/graph-search/` still works for bookmarks and docs.
+
+Disable the admin section and custom URLs with:
+
+```python
+GRAPH_SEARCH = {
+    # ...
+    "ADMIN_SEARCH_ENABLED": False,
+}
+```
 
 ## Supported Backends
 

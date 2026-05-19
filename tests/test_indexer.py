@@ -1,3 +1,5 @@
+from unittest import mock
+
 from django.test import TestCase
 
 from django_graph_search.indexer import Indexer
@@ -101,8 +103,14 @@ class IndexerTests(TestCase):
             delta_cache=delta_cache,
         )
         product = Product.objects.first()
-        indexer.index_instance(product, config.models[0])
-        indexer.index_instance(product, config.models[0])
+        with mock.patch.object(
+            embedding_backend,
+            "embed_batch",
+            wraps=embedding_backend.embed_batch,
+        ) as embed_batch:
+            indexer.index_instance(product, config.models[0])
+            indexer.index_instance(product, config.models[0])
+            assert embed_batch.call_count == 1
 
         self.assertEqual(len(vector_store.docs), 1)
 
