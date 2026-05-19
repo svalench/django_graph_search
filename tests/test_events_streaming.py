@@ -22,6 +22,7 @@ from django_graph_search.settings import (
     SmartIndexingConfig,
     ConversationalConfig,
     VectorStoreConfig,
+    clear_graph_search_caches,
     get_settings,
 )
 from django_graph_search.views import StreamingSearchAPIView
@@ -141,11 +142,11 @@ class FallbackGraphEventsTests(TestCase):
 @pytest.fixture
 def graph_search_settings():
     original = getattr(django_settings, "GRAPH_SEARCH", None)
-    get_settings.cache_clear()
+    clear_graph_search_caches()
 
     def _apply(payload):
         django_settings.GRAPH_SEARCH = payload
-        get_settings.cache_clear()
+        clear_graph_search_caches()
         return get_settings()
 
     yield _apply
@@ -155,7 +156,7 @@ def graph_search_settings():
             delattr(django_settings, "GRAPH_SEARCH")
     else:
         django_settings.GRAPH_SEARCH = original
-    get_settings.cache_clear()
+    clear_graph_search_caches()
 
 
 def _drain(response) -> list:

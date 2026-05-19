@@ -8,7 +8,7 @@ from unittest import mock
 import pytest
 from django.conf import settings as django_settings
 
-from django_graph_search.settings import get_settings
+from django_graph_search.settings import clear_graph_search_caches, get_settings
 
 from .test_app.models import Category, Product
 
@@ -16,11 +16,11 @@ from .test_app.models import Category, Product
 @pytest.fixture(name="graph_search_signal_settings")
 def _graph_search_signal_settings_fixture():
     original = getattr(django_settings, "GRAPH_SEARCH", None)
-    get_settings.cache_clear()
+    clear_graph_search_caches()
 
     def _apply(payload: Dict[str, Any]):
         django_settings.GRAPH_SEARCH = payload
-        get_settings.cache_clear()
+        clear_graph_search_caches()
 
     yield _apply
 
@@ -28,7 +28,7 @@ def _graph_search_signal_settings_fixture():
         delattr(django_settings, "GRAPH_SEARCH")
     elif original is not None:
         django_settings.GRAPH_SEARCH = original
-    get_settings.cache_clear()
+    clear_graph_search_caches()
 
 
 @pytest.mark.django_db

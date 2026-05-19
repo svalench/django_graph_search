@@ -17,6 +17,11 @@
         <input type="text" name="q" id="q" value="{{ query }}" placeholder="Введите запрос">
       </div>
       <div class="graph-search__row">
+        <label for="min_score">Мин. score (0–1, опционально)</label>
+        <input type="text" name="min_score" id="min_score" value="{{ min_score }}"
+               placeholder="например 0.35">
+      </div>
+      <div class="graph-search__row">
         <label for="models">Модели (через запятую)</label>
         <input type="text" name="models" id="models" value="{{ model_list }}"
                placeholder="app.Model, app.OtherModel">
@@ -25,6 +30,10 @@
         <button type="submit" class="default">Искать</button>
       </div>
     </form>
+
+    {% if min_score_error %}
+      <p class="errornote">{{ min_score_error }}</p>
+    {% endif %}
 
     {% if available_models %}
       <div class="graph-search__hint">
@@ -39,6 +48,7 @@
             <th>Модель</th>
             <th>ID</th>
             <th>Score</th>
+            <th>Индексируемый текст</th>
             <th>Данные</th>
           </tr>
         </thead>
@@ -54,6 +64,15 @@
                 {% endif %}
               </td>
               <td>{{ item.score }}</td>
+              <td>
+                {% if item.text_preview %}
+                  <pre class="graph-search__snippet">{{ item.text_preview }}</pre>
+                {% elif item.text %}
+                  <pre class="graph-search__snippet">{{ item.text }}</pre>
+                {% else %}
+                  —
+                {% endif %}
+              </td>
               <td>
                 {% if item.data %}
                   <pre>{{ item.data }}</pre>

@@ -4,6 +4,7 @@ from typing import Optional, Tuple
 
 from django.utils.module_loading import import_string
 
+from .component_registry import get_shared_components
 from .graph_resolver import GraphResolver
 from .settings import GraphSearchConfig, get_settings
 
@@ -16,6 +17,8 @@ def build_components(
     embedding_profile: Optional[str],
 ) -> Tuple[GraphSearchConfig, object, object, GraphResolver]:
     config = config or get_settings()
+    if vector_store is None and embedding_backend is None and resolver is None:
+        return get_shared_components(config, embedding_profile)
     if vector_store is None:
         backend_cls = import_string(config.vector_store.backend)
         vector_store = backend_cls(**config.vector_store.options)

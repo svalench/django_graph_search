@@ -53,13 +53,15 @@ class FaissBackend(BaseVectorStore):
         for idx, dist in zip(indices[0], distances[0]):
             if idx < 0 or idx >= len(self._ids):
                 continue
-            metadata = self._metas[idx]
+            metadata = dict(self._metas[idx])
             if filters and not self._match_filters(metadata, filters):
                 continue
+            fdist = float(dist)
+            metadata["vector_distance"] = fdist
             results.append(
                 SearchResult(
                     id=self._ids[idx],
-                    score=max(0.0, min(1.0, 1.0 / (1.0 + float(dist)))),
+                    score=max(0.0, min(1.0, 1.0 / (1.0 + fdist))),
                     metadata=metadata,
                 )
             )

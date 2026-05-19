@@ -47,3 +47,11 @@
   color: #666;
 }
 
+.graph-search__snippet {
+  max-width: 420px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  margin: 0;
+}
+

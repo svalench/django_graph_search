@@ -12,4 +12,8 @@ class DjangoGraphSearchConfig(AppConfig):
         from . import signals  # noqa: WPS433,F401
 
         get_settings()
+        if get_settings().admin_search_enabled:
+            from . import admin  # noqa: WPS433
+
+            admin.setup_admin_site()
 

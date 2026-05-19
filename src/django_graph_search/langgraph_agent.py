@@ -144,7 +144,7 @@ def vector_search_node(
         for hit in hits:
             key = _doc_key(hit)
             existing = merged.get(key)
-            if existing is None or _score_value(hit) > _score_value(existing):
+            if existing is None or _is_hit_preferred_over(hit, existing):
                 merged[key] = hit
 
     results = list(merged.values())
@@ -154,8 +154,8 @@ def vector_search_node(
         allowed = set(models_filter)
         results = [item for item in results if item.metadata.get("model") in allowed]
 
-    # Stable order: best score first.
-    results.sort(key=_score_value, reverse=True)
+    # Score убыв., при равенстве — меньший vector_distance (сырая метрика стора).
+    results = sort_vector_hits(results)
 
     state["raw_results"] = results
     state["merged_results"] = results
@@ -181,7 +181,7 @@ def rerank_results_node(
     rerank_inputs = [
         RerankCandidate(
             id=_doc_key(item),
-            text=getattr(item, "text", "") or "",
+            text=_candidate_rerank_text(item),
             score=_score_value(item),
             metadata=dict(item.metadata or {}),
         )
@@ -403,6 +403,51 @@ def _score_value(item: Any) -> float:
         return 0.0
 
 
+def _raw_vector_distance(item: Any) -> float:
+    """Меньше — ближе по метрике индекса (если бэкенд положил vector_distance в metadata)."""
+    md = getattr(item, "metadata", None) or {}
+    d = md.get("vector_distance")
+    if d is None:
+        return float("inf")
+    try:
+        return float(d)
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _vector_hit_sort_key(item: Any) -> tuple:
+    return (-_score_value(item), _raw_vector_distance(item), str(getattr(item, "id", "")))
+
+
+def sort_vector_hits(items: List[Any]) -> List[Any]:
+    """Сортировка выдачи векторного поиска: score ↓, vector_distance ↑, id."""
+    return sorted(items, key=_vector_hit_sort_key)
+
+
+def _is_hit_preferred_over(new: Any, old: Any) -> bool:
+    """Выбрать лучший hit при слиянии нескольких запросов (в т.ч. при равном score)."""
+    sn, so = _score_value(new), _score_value(old)
+    if sn > so:
+        return True
+    if sn < so:
+        return False
+    dn, do = _raw_vector_distance(new), _raw_vector_distance(old)
+    if dn < do:
+        return True
+    if dn > do:
+        return False
+    return False
+
+
+def _candidate_rerank_text(item: Any) -> str:
+    """Текст документа для rerank: из metadata (SearchResult) или поле .text у тестовых заглушек."""
+    md = getattr(item, "metadata", None) or {}
+    t = md.get("text") or ""
+    if not t and hasattr(item, "text"):
+        t = item.text or ""
+    return t
+
+
 def resolve_graph_factory(dotted_path: str) -> Callable[..., Any]:
     """Lazily import a graph factory (used by the searcher)."""
     from django.utils.module_loading import import_string
@@ -419,4 +464,5 @@ __all__ = [
     "postprocess_results_node",
     "build_search_graph",
     "resolve_graph_factory",
+    "sort_vector_hits",
 ]

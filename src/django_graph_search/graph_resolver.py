@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Iterable, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Iterable, List, Optional, Set, Tuple
 
 from django.db import models
 
-from .settings import ModelConfig
+if TYPE_CHECKING:
+    from .settings import ModelConfig
 
 
 class GraphResolver:
@@ -12,7 +13,7 @@ class GraphResolver:
         visited: Set[Tuple[str, Any]] = set()
         return self._resolve_instance(instance, depth, visited)
 
-    def build_searchable_text(self, instance: models.Model, config: ModelConfig) -> str:
+    def build_searchable_text(self, instance: models.Model, config: "ModelConfig") -> str:
         parts: List[str] = []
         if config.fields == ["__all__"]:
             field_dict = self._collect_fields(instance)

@@ -5,7 +5,7 @@ from django.conf import settings as django_settings
 from django.test import TestCase
 
 from django_graph_search.graph_resolver import GraphResolver
-from django_graph_search.settings import ModelConfig, get_settings
+from django_graph_search.settings import ModelConfig, clear_graph_search_caches, get_settings
 
 from .test_app.models import Category, Product
 
@@ -43,7 +43,7 @@ class GraphResolverWeightAllTests(TestCase):
 def test_weight_fields_parsed_for_all_fields_in_settings():
     """GRAPH_SEARCH: weight_fields нормализуются при fields='__all__'."""
     original = getattr(django_settings, "GRAPH_SEARCH", None)
-    get_settings.cache_clear()
+    clear_graph_search_caches()
     django_settings.GRAPH_SEARCH = {
         "MODELS": [
             {
@@ -70,4 +70,4 @@ def test_weight_fields_parsed_for_all_fields_in_settings():
             delattr(django_settings, "GRAPH_SEARCH")
         else:
             django_settings.GRAPH_SEARCH = original
-        get_settings.cache_clear()
+        clear_graph_search_caches()

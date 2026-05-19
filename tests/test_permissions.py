@@ -15,7 +15,7 @@ from django_graph_search.permissions import (
     check_permissions,
     check_throttle,
 )
-from django_graph_search.settings import GraphSearchConfig, get_settings
+from django_graph_search.settings import GraphSearchConfig, clear_graph_search_caches, get_settings
 
 
 def _minimal_graph_search(extra: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -37,12 +37,12 @@ def _minimal_graph_search(extra: Dict[str, Any] | None = None) -> Dict[str, Any]
 @pytest.fixture(name="apply_api_settings")
 def _apply_api_settings_fixture():
     original = getattr(django_settings, "GRAPH_SEARCH", None)
-    get_settings.cache_clear()
+    clear_graph_search_caches()
     SimpleScopedRateThrottle._windows.clear()
 
     def _apply(payload: Dict[str, Any]) -> GraphSearchConfig:
         django_settings.GRAPH_SEARCH = payload
-        get_settings.cache_clear()
+        clear_graph_search_caches()
         return get_settings()
 
     yield _apply
@@ -51,7 +51,7 @@ def _apply_api_settings_fixture():
         delattr(django_settings, "GRAPH_SEARCH")
     elif original is not None:
         django_settings.GRAPH_SEARCH = original
-    get_settings.cache_clear()
+    clear_graph_search_caches()
     SimpleScopedRateThrottle._windows.clear()
 
 

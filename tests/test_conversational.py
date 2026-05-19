@@ -10,7 +10,7 @@ import pytest
 from django.conf import settings as django_settings
 from django.test import RequestFactory
 
-from django_graph_search.settings import get_settings
+from django_graph_search.settings import clear_graph_search_caches, get_settings
 from django_graph_search.views import ConversationalSearchAPIView, _memory_backend_registry
 
 
@@ -38,13 +38,13 @@ def _minimal_graph_search(extra: Dict[str, Any] | None = None) -> Dict[str, Any]
 def _apply_conv_settings_fixture():
     original = getattr(django_settings, "GRAPH_SEARCH", None)
     original_debug = django_settings.DEBUG
-    get_settings.cache_clear()
+    clear_graph_search_caches()
     _memory_backend_registry.clear()
 
     def _apply(payload: Dict[str, Any], *, debug: bool):
         django_settings.GRAPH_SEARCH = payload
         django_settings.DEBUG = debug
-        get_settings.cache_clear()
+        clear_graph_search_caches()
 
     yield _apply
 
@@ -53,7 +53,7 @@ def _apply_conv_settings_fixture():
         delattr(django_settings, "GRAPH_SEARCH")
     elif original is not None:
         django_settings.GRAPH_SEARCH = original
-    get_settings.cache_clear()
+    clear_graph_search_caches()
     _memory_backend_registry.clear()
 
 
