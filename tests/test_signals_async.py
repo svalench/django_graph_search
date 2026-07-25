@@ -32,7 +32,9 @@ def _graph_search_signal_settings_fixture():
 
 
 @pytest.mark.django_db
-def test_thread_async_index_does_not_block_request(graph_search_signal_settings):
+def test_thread_async_index_does_not_block_request(
+    graph_search_signal_settings, django_capture_on_commit_callbacks
+):
     """При ASYNC_INDEXING + thread обработчик сигнала возвращается до долгой работы."""
     graph_search_signal_settings(
         {
@@ -55,6 +57,7 @@ def test_thread_async_index_does_not_block_request(graph_search_signal_settings)
     cat = Category.objects.create(name="c")
     with mock.patch("django_graph_search.tasks.index_instance_task_fn", side_effect=slow_index):
         t0 = time.monotonic()
-        Product.objects.create(name="fast", category=cat)
+        with django_capture_on_commit_callbacks(execute=True):
+            Product.objects.create(name="fast", category=cat)
         elapsed = time.monotonic() - t0
     assert elapsed < 0.35

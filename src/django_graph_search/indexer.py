@@ -75,7 +75,8 @@ class Indexer(ComponentMixin):
     ) -> int:
         total = 0
         batch: List[models.Model] = []
-        for instance in queryset.iterator():
+        # chunk_size=batch_size: иначе iterator() игнорирует prefetch_related.
+        for instance in self._apply_prefetch(queryset, config).iterator(chunk_size=batch_size):
             batch.append(instance)
             if len(batch) >= batch_size:
                 total += self._index_batch(batch, config)
@@ -83,6 +84,36 @@ class Indexer(ComponentMixin):
         if batch:
             total += self._index_batch(batch, config)
         return total
+
+    @staticmethod
+    def _apply_prefetch(queryset: models.QuerySet, config: ModelConfig) -> models.QuerySet:
+        """
+        select_related/prefetch_related на первый уровень связей, чтобы обход
+        графа в resolver не порождал N+1 запросов на каждый индексируемый объект.
+        """
+        if not config.follow_relations or config.relation_depth < 1:
+            return queryset
+        select: List[str] = []
+        prefetch: List[str] = []
+        for field in queryset.model._meta.get_fields():
+            if not field.is_relation:
+                continue
+            try:
+                if field.auto_created and not field.concrete:
+                    accessor = field.get_accessor_name()
+                    if accessor:
+                        prefetch.append(accessor)
+                elif field.many_to_many:
+                    prefetch.append(field.name)
+                else:
+                    select.append(field.name)
+            except Exception:  # noqa: BLE001 - экзотические relation-поля пропускаем
+                continue
+        if select:
+            queryset = queryset.select_related(*select)
+        if prefetch:
+            queryset = queryset.prefetch_related(*prefetch)
+        return queryset
 
     def index_instance(self, instance: models.Model, config: ModelConfig) -> None:
         self._index_batch([instance], config)

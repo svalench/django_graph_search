@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Django Graph Search — Semantic vector search across your model graph</title>
+<meta name="description" content="Production-ready semantic vector search for Django. Searches across FK, M2M and reverse relations by traversing your model graph. ChromaDB, FAISS, Qdrant, pgvector.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --green: #3fb950;
+    --violet: #bc8cff; --code-bg: #0a0e14;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  header.nav { border-bottom: 1px solid var(--border); position: sticky; top: 0; background: rgba(13,17,23,.92); backdrop-filter: blur(8px); z-index: 10; }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .logo { font-weight: 700; font-size: 17px; color: var(--text); }
+  .logo span { color: var(--accent); }
+  .nav-links a { color: var(--muted); margin-left: 22px; font-size: 14px; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+
+  .hero { text-align: center; padding: 88px 0 64px; }
+  .hero .kicker { color: var(--green); font-size: 13px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
+  .hero h1 { font-size: clamp(34px, 5.5vw, 56px); line-height: 1.12; margin: 16px 0; font-weight: 800; letter-spacing: -.02em; }
+  .hero h1 em { font-style: normal; background: linear-gradient(90deg, var(--accent), var(--violet)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero p.sub { color: var(--muted); font-size: 18px; max-width: 680px; margin: 0 auto 32px; }
+  .badges { margin-bottom: 32px; }
+  .badges img { margin: 0 4px; vertical-align: middle; }
+  .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 12px 26px; border-radius: 8px; font-weight: 600; font-size: 15px; border: 1px solid var(--border); }
+  .btn:hover { text-decoration: none; }
+  .btn-primary { background: var(--accent); color: #06101f; border-color: var(--accent); }
+  .btn-primary:hover { filter: brightness(1.1); }
+  .btn-ghost { color: var(--text); background: var(--panel); }
+  .btn-ghost:hover { border-color: var(--muted); }
+
+  .install { max-width: 720px; margin: 40px auto 0; text-align: left; background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; position: relative; }
+  .install .comment { color: var(--muted); }
+  .install .cmd { color: var(--green); }
+
+  section { padding: 64px 0; }
+  h2 { font-size: 30px; font-weight: 750; letter-spacing: -.01em; margin-bottom: 12px; }
+  .section-sub { color: var(--muted); max-width: 640px; margin-bottom: 36px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+  .card h3 { font-size: 16px; margin-bottom: 8px; }
+  .card p { color: var(--muted); font-size: 14px; }
+  .card .icon { font-size: 22px; display: block; margin-bottom: 12px; }
+
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13.5px; line-height: 1.55; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  p code, li code, td code { background: var(--panel); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; font-size: .92em; }
+  .tok-k { color: #ff7b72; } .tok-s { color: #a5d6ff; } .tok-c { color: #8b949e; } .tok-f { color: #d2a8ff; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
+  td:first-child { font-weight: 600; }
+  .yes { color: var(--green); } .no { color: var(--muted); }
+
+  ul.checks { list-style: none; }
+  ul.checks li { padding: 8px 0 8px 30px; position: relative; color: var(--muted); }
+  ul.checks li::before { content: "✓"; position: absolute; left: 0; color: var(--green); font-weight: 700; }
+  ul.checks li strong { color: var(--text); }
+
+  footer { border-top: 1px solid var(--border); padding: 36px 0 48px; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+  footer a { margin-right: 18px; }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="logo" href="#">django<span>-graph-search</span></a>
+    <nav class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#quickstart">Quickstart</a>
+      <a href="#backends">Backends</a>
+      <a href="#release">0.3.4</a>
+      <a href="https://github.com/svalench/django_graph_search">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <div class="kicker">Semantic search for Django</div>
+    <h1>Vector search that<br><em>traverses your model graph</em></h1>
+    <p class="sub">Make a <code>Product</code> searchable by its <code>category__name</code>, <code>tags__name</code> and <code>brand__description</code> — automatically. Sentence-transformers embeddings, pluggable vector backends, admin UI and REST API out of the box.</p>
+    <div class="badges">
+      <a href="https://badge.fury.io/py/django-graph-search"><img src="https://badge.fury.io/py/django-graph-search.svg" alt="PyPI"></a>
+      <img src="https://img.shields.io/pypi/pyversions/django-graph-search.svg" alt="Python">
+      <img src="https://img.shields.io/badge/Django-4.2%2B-092E20?logo=django" alt="Django">
+      <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT">
+    </div>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#quickstart">Get started</a>
+      <a class="btn btn-ghost" href="https://github.com/svalench/django_graph_search">View on GitHub</a>
+      <a class="btn btn-ghost" href="https://pypi.org/project/django-graph-search/">PyPI</a>
+    </div>
+    <div class="install">
+      <div><span class="comment"># ChromaDB backend (recommended for local/dev)</span></div>
+      <div><span class="cmd">pip install</span> django-graph-search[chromadb]</div>
+      <div style="margin-top:8px"><span class="comment"># or FAISS / Qdrant / pgvector / cloud embeddings</span></div>
+      <div><span class="cmd">pip install</span> django-graph-search[faiss] &nbsp;<span class="comment"># qdrant · pgvector · openai · cohere · all</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2>Why graph search?</h2>
+    <p class="section-sub">Most Django search solutions treat each model in isolation. Django Graph Search builds rich search context by walking the ORM relation graph <em>before</em> indexing.</p>
+    <div class="grid">
+      <div class="card"><span class="icon">🕸️</span><h3>Graph-aware indexing</h3><p>Follows FK, M2M and reverse relations to a configurable depth, with per-field weights and traversal limits (<code>MAX_RELATED_ITEMS</code>, <code>MAX_TEXT_LENGTH</code>).</p></div>
+      <div class="card"><span class="icon">🌐</span><h3>Multilingual semantics</h3><p>Sentence-transformers embeddings out of the box; OpenAI and Cohere cloud embeddings when you don't want PyTorch in your workers.</p></div>
+      <div class="card"><span class="icon">🔌</span><h3>Pluggable backends</h3><p>ChromaDB, FAISS, Qdrant, pgvector — one interface, upsert semantics everywhere. Switch with a single settings key.</p></div>
+      <div class="card"><span class="icon">⚡</span><h3>Transaction-safe auto-index</h3><p>Signals dispatch via <code>transaction.on_commit</code> into a bounded daemon thread pool, Celery or django-q — requests never block.</p></div>
+      <div class="card"><span class="icon">🧭</span><h3>Admin &amp; REST included</h3><p>Semantic search inside <code>/admin/</code>, index-coverage dashboard, and a REST API with permissions, throttling and streaming.</p></div>
+      <div class="card"><span class="icon">💬</span><h3>Conversational &amp; LangGraph</h3><p>Optional session-aware search with clarification loops, query expansion, reranking and SSE/NDJSON event streaming.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="quickstart">
+  <div class="wrap">
+    <h2>Quickstart</h2>
+    <p class="section-sub">Three steps to semantic search across your models.</p>
+    <pre><span class="tok-c"># 1. settings.py</span>
+INSTALLED_APPS = [ ..., <span class="tok-s">"django_graph_search"</span> ]
+
+GRAPH_SEARCH = {
+    <span class="tok-s">"MODELS"</span>: [
+        {<span class="tok-s">"model"</span>: <span class="tok-s">"shop.Product"</span>,
+         <span class="tok-s">"fields"</span>: [<span class="tok-s">"name"</span>, <span class="tok-s">"description"</span>, <span class="tok-s">"category__name"</span>, <span class="tok-s">"tags__name"</span>]},
+    ],
+    <span class="tok-s">"VECTOR_STORE"</span>: {
+        <span class="tok-s">"BACKEND"</span>: <span class="tok-s">"django_graph_search.backends.ChromaDBBackend"</span>,
+        <span class="tok-s">"OPTIONS"</span>: {<span class="tok-s">"persist_directory"</span>: <span class="tok-s">"vector_db"</span>},
+    },
+}
+
+<span class="tok-c"># 2. urls.py</span>
+urlpatterns = [ path(<span class="tok-s">"api/search/"</span>, include(<span class="tok-s">"django_graph_search.urls"</span>)) ]
+
+<span class="tok-c"># 3. build the index and query</span>
+$ python manage.py build_search_index
+$ curl <span class="tok-s">"http://localhost:8000/api/search/?q=red+phone&amp;limit=5"</span></pre>
+  </div>
+</section>
+
+<section id="backends">
+  <div class="wrap">
+    <h2>Supported backends</h2>
+    <p class="section-sub">Same API, same document format — pick per environment. All backends re-index with upsert semantics since 0.3.4.</p>
+    <table>
+      <thead><tr><th>Backend</th><th>Best for</th><th>Server required</th></tr></thead>
+      <tbody>
+        <tr><td>ChromaDB</td><td>Development, small-medium datasets</td><td class="no">No</td></tr>
+        <tr><td>FAISS</td><td>High-speed CPU search, offline, optional disk persistence</td><td class="no">No</td></tr>
+        <tr><td>Qdrant</td><td>Production, large datasets, filtering</td><td class="yes">Yes</td></tr>
+        <tr><td>pgvector</td><td>Same PostgreSQL as Django, no separate vector server</td><td class="yes">PostgreSQL + <code>vector</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="release">
+  <div class="wrap">
+    <h2>What's new in 0.3.4</h2>
+    <p class="section-sub">Reliability &amp; security hardening — fully backward-compatible with 0.3.x.</p>
+    <ul class="checks">
+      <li><strong>Upsert semantics on every backend</strong> — re-saving an object can no longer raise <code>DuplicateIDError</code> or create duplicates</li>
+      <li><strong>Transaction-safe signals</strong> — indexing and deletion run via <code>transaction.on_commit</code>; rollback can't corrupt the index</li>
+      <li><strong><code>/api/search/similar/</code> access control</strong> — now enforces the same permissions and throttling as other endpoints</li>
+      <li><strong>FAISS persistence</strong> — save the index to disk with <code>persist_path</code>, reload on startup</li>
+      <li><strong>Graph traversal limits</strong> — <code>MAX_RELATED_ITEMS</code> and <code>MAX_TEXT_LENGTH</code> guard against runaway indexing</li>
+      <li><strong>Filtered searches fill <code>limit</code></strong> — model filters are pushed into the vector store; <code>find_similar</code> excludes the object itself</li>
+      <li><strong>Result field whitelist</strong> — REST <code>data</code> exposes only fields from your model config</li>
+      <li><strong>CI matrix</strong> — Python 3.10–3.13 × Django 4.2/5.0/5.1, 131 tests, pylint 10/10</li>
+    </ul>
+    <p style="margin-top:24px"><a href="https://github.com/svalench/django_graph_search/blob/main/RELEASE_NOTES_0.3.4.md">Full release notes →</a></p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>MIT License · © svalench</div>
+    <div>
+      <a href="https://github.com/svalench/django_graph_search">GitHub</a>
+      <a href="https://pypi.org/project/django-graph-search/">PyPI</a>
+      <a href="https://github.com/svalench/django_graph_search/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/svalench/django_graph_search/issues">Issues</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

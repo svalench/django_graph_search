@@ -33,7 +33,9 @@ def _graph_search_nb_settings_fixture():
 
 
 @pytest.mark.django_db
-def test_non_blocking_auto_index_returns_before_slow_embed(graph_search_nb_settings):
+def test_non_blocking_auto_index_returns_before_slow_embed(
+    graph_search_nb_settings, django_capture_on_commit_callbacks
+):
     graph_search_nb_settings(
         {
             "MODELS": [{"model": "test_app.Product", "fields": ["name"]}],
@@ -56,13 +58,16 @@ def test_non_blocking_auto_index_returns_before_slow_embed(graph_search_nb_setti
     cat = Category.objects.create(name="c")
     with mock.patch("django_graph_search.tasks.index_instance_task_fn", side_effect=slow_index):
         t0 = time.monotonic()
-        Product.objects.create(name="fast", category=cat)
+        with django_capture_on_commit_callbacks(execute=True):
+            Product.objects.create(name="fast", category=cat)
         elapsed = time.monotonic() - t0
     assert elapsed < 0.35
 
 
 @pytest.mark.django_db
-def test_skip_full_save_when_only_last_login_changed(graph_search_nb_settings):
+def test_skip_full_save_when_only_last_login_changed(
+    graph_search_nb_settings, django_capture_on_commit_callbacks
+):
     User = get_user_model()
     label = User._meta.label
     graph_search_nb_settings(
@@ -79,13 +84,22 @@ def test_skip_full_save_when_only_last_login_changed(graph_search_nb_settings):
             "AUTO_INDEX_SKIP_UPDATE_FIELDS": ["last_login"],
         }
     )
-    user = User.objects.create_user(username="u1", password="x")
-    user.set_password("y")
-    user.save()
+    with django_capture_on_commit_callbacks(execute=True):
+        user = User.objects.create_user(username="u1", password="x")
+        user.set_password("y")
+        user.save()
 
     with mock.patch("django_graph_search.signals._dispatch_index") as dispatch:
         from django.utils import timezone
 
         user.last_login = timezone.now()
-        user.save()
+        with django_capture_on_commit_callbacks(execute=True):
+            user.save()
         dispatch.assert_not_called()
+
+    # Реальное изменение (не только skip-поля) должно индексировать.
+    with mock.patch("django_graph_search.signals._dispatch_index") as dispatch:
+        user.username = "u2"
+        with django_capture_on_commit_callbacks(execute=True):
+            user.save()
+        dispatch.assert_called_once()

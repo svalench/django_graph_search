@@ -93,11 +93,25 @@ class Searcher(ComponentMixin):
                 log.warning("LangGraph find_similar failed, falling back: %s", exc)
 
         query_vector = self.embedding_backend.embed(text, is_query=True)
+        from .indexer import make_doc_id
+
+        own_doc_id = make_doc_id(instance._meta.label, instance.pk)
+        # Запас: self + возможные дубликаты из старых индексов до upsert-фикса.
+        fetch_limit = max(limit + 1, min(limit * 3, 100))
         results = self.vector_store.search(
             query_vector,
-            limit=limit,
+            limit=fetch_limit,
             filters={"model": instance._meta.label},
         )
+        results = [item for item in results if item.id != own_doc_id][:limit]
+        if len(results) < limit and fetch_limit < 1000:
+            # Редкий кейс: self/дубликаты съели выдачу — второй проход шире.
+            results = self.vector_store.search(
+                query_vector,
+                limit=min(max(limit * 10, fetch_limit), 1000),
+                filters={"model": instance._meta.label},
+            )
+            results = [item for item in results if item.id != own_doc_id][:limit]
         results = sort_vector_hits(results)
         return [self._format_result(item) for item in results]
 
@@ -112,10 +126,22 @@ class Searcher(ComponentMixin):
     ) -> List[dict]:
         """Original deterministic search path. Kept for backwards compatibility."""
         query_vector = self.embedding_backend.embed(query, is_query=True)
-        results = self.vector_store.search(query_vector, limit=limit, filters=None)
+        filters = None
+        fetch_limit = limit
         if models:
+            if len(models) == 1:
+                # Одна модель — фильтр на стороне vector store (иначе после
+                # пост-фильтрации возвращалось бы меньше limit результатов).
+                filters = {"model": models[0]}
+            else:
+                # Несколько моделей: over-fetch и пост-фильтр по metadata.
+                fetch_limit = min(max(limit * 10, limit), 5000)
+        results = self.vector_store.search(query_vector, limit=fetch_limit, filters=filters)
+        if models and filters is None:
             allowed = set(models)
-            results = [item for item in results if item.metadata.get("model") in allowed]
+            results = [item for item in results if item.metadata.get("model") in allowed][
+                :limit
+            ]
         results = sort_vector_hits(results)
         return [self._format_result(item) for item in results]
 
@@ -191,13 +217,25 @@ class Searcher(ComponentMixin):
             model_cls = self._get_model_class(model_label)
             obj = model_cls.objects.filter(pk=pk).first()
             if obj is not None:
-                data["data"] = self._model_to_dict(obj)
+                model_cfg = next(
+                    (c for c in self.config.models if c.model == model_label), None
+                )
+                data["data"] = self._model_to_dict(obj, model_cfg)
                 data["admin_url"] = self._admin_url(obj)
         return data
 
-    def _model_to_dict(self, instance) -> dict:
+    def _model_to_dict(self, instance, model_cfg: Optional[ModelConfig]) -> dict:
+        # Отдаём в API только поля, явно перечисленные в конфиге модели:
+        # иначе сюда попадали служебные поля (password hash, токены и т.п.).
+        allowed: Optional[set] = None
+        if model_cfg is None:
+            allowed = set()
+        elif model_cfg.fields != ["__all__"]:
+            allowed = {f.split("__", 1)[0] for f in model_cfg.fields}
         data = {}
         for field in instance._meta.concrete_fields:
+            if allowed is not None and field.name not in allowed:
+                continue
             value = getattr(instance, field.name, None)
             if value is None:
                 continue

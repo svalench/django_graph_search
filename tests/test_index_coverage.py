@@ -16,6 +16,7 @@ from tests.test_app.models import Category, Product
 
 
 def test_faiss_count_documents_no_filters():
+    pytest.importorskip("faiss", reason="faiss-cpu not installed")
     store = FaissBackend()
     assert store.count_documents() == 0
     assert store.count_documents(None) == 0
@@ -55,6 +56,7 @@ def test_dummy_vector_backend_count_documents():
 
 @pytest.mark.django_db
 def test_get_index_coverage_uses_orm_and_store():
+    pytest.importorskip("faiss", reason="faiss-cpu not installed")
     category = Category.objects.create(name="cat")
     p1 = Product.objects.create(name="one", category=category)
     Product.objects.create(name="two", category=category)

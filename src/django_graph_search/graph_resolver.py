@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Iterable, List, Optional, Set, Tuple
 
 from django.db import models
@@ -7,13 +8,47 @@ from django.db import models
 if TYPE_CHECKING:
     from .settings import ModelConfig
 
+log = logging.getLogger(__name__)
+
+DEFAULT_MAX_RELATED_ITEMS = 100
+DEFAULT_MAX_TEXT_LENGTH = 8000
+
 
 class GraphResolver:
+    def __init__(
+        self,
+        max_related_items: Optional[int] = None,
+        max_text_length: Optional[int] = None,
+    ) -> None:
+        self._max_related_items = max_related_items
+        self._max_text_length = max_text_length
+
+    def _limits(self) -> Tuple[int, int]:
+        """Лимиты обхода графа: из аргументов или GRAPH_SEARCH (дефолты выше)."""
+        mri = self._max_related_items
+        mtl = self._max_text_length
+        if mri is None or mtl is None:
+            try:
+                from .settings import get_settings
+
+                cfg = get_settings()
+                if mri is None:
+                    mri = cfg.max_related_items
+                if mtl is None:
+                    mtl = cfg.max_text_length
+            except Exception:  # noqa: BLE001 - настройки могут быть не сконфигурированы
+                if mri is None:
+                    mri = DEFAULT_MAX_RELATED_ITEMS
+                if mtl is None:
+                    mtl = DEFAULT_MAX_TEXT_LENGTH
+        return mri, mtl
+
     def resolve(self, instance: models.Model, depth: int = 2) -> dict:
         visited: Set[Tuple[str, Any]] = set()
         return self._resolve_instance(instance, depth, visited)
 
     def build_searchable_text(self, instance: models.Model, config: "ModelConfig") -> str:
+        max_related, max_text_length = self._limits()
         parts: List[str] = []
         if config.fields == ["__all__"]:
             field_dict = self._collect_fields(instance)
@@ -27,10 +62,13 @@ class GraphResolver:
                     parts.extend(self._apply_weight(text, config.weight_fields.get(field_path)))
 
         if config.follow_relations and config.relation_depth > 0:
-            related_texts = self._collect_related_text(instance, config.relation_depth)
+            related_texts = self._collect_related_text(
+                instance, config.relation_depth, max_related_items=max_related
+            )
             parts.extend(related_texts)
 
-        return " ".join([p for p in parts if p])
+        # Ограничение длины: эмбеддинг-модель иначе молча усечёт текст сама.
+        return " ".join([p for p in parts if p])[:max_text_length]
 
     def _resolve_instance(
         self,
@@ -89,10 +127,17 @@ class GraphResolver:
             fields[name] = value
         return fields
 
-    def _collect_related_text(self, instance: models.Model, depth: int) -> List[str]:
+    def _collect_related_text(
+        self,
+        instance: models.Model,
+        depth: int,
+        max_related_items: Optional[int] = None,
+    ) -> List[str]:
+        if max_related_items is None:
+            max_related_items, _ = self._limits()
         visited: Set[Tuple[str, Any]] = set()
         texts: List[str] = []
-        self._collect_related_text_inner(instance, depth, visited, texts)
+        self._collect_related_text_inner(instance, depth, visited, texts, max_related_items)
         return texts
 
     def _collect_related_text_inner(
@@ -101,6 +146,7 @@ class GraphResolver:
         depth: int,
         visited: Set[Tuple[str, Any]],
         texts: List[str],
+        max_related_items: int,
     ) -> None:
         if depth <= 0:
             return
@@ -130,10 +176,16 @@ class GraphResolver:
                 continue
 
             if field.many_to_many or field.one_to_many:
-                for item in related_value.all():
-                    self._collect_related_text_inner(item, depth - 1, visited, texts)
+                # Лимит на число связанных объектов: модель с тысячами
+                # reverse-связей не должна взрывать индекс и БД.
+                for item in related_value.all()[:max_related_items]:
+                    self._collect_related_text_inner(
+                        item, depth - 1, visited, texts, max_related_items
+                    )
             else:
-                self._collect_related_text_inner(related_value, depth - 1, visited, texts)
+                self._collect_related_text_inner(
+                    related_value, depth - 1, visited, texts, max_related_items
+                )
 
     def _resolve_path(self, instance: models.Model, path: str) -> Any:
         current: Any = instance

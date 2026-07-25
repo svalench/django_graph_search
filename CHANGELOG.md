@@ -7,6 +7,39 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-07-25
+
+Reliability and security hardening release: upsert semantics across all vector
+backends, transaction-safe signal indexing, and consistent API access control.
+
+```bash
+pip install django-graph-search==0.3.4
+```
+
+### Fixed
+- **ChromaDB upsert:** re-indexing an existing object no longer raises `DuplicateIDError` — `collection.upsert` is used instead of `collection.add`.
+- **FAISS duplicates:** `FaissBackend.add_documents` now has upsert semantics — re-added document ids replace previous entries instead of duplicating them (including duplicate ids within a single batch).
+- **FAISS filtered search:** when metadata filters are set, the backend escalates to a full-index scan if the first over-fetch pass cannot fill `limit`.
+- **Transaction safety:** `AUTO_INDEX` signals dispatch indexing/deletion via `transaction.on_commit`, so background tasks never read uncommitted rows and rollback no longer corrupts the index. Delete handlers capture `pk` before commit (Django clears `instance.pk` after `delete()`).
+- **`/api/search/similar/` security:** the endpoint now enforces `GRAPH_SEARCH["API"]` permissions and throttling like the other search endpoints (previously it was always public).
+- **Auth-user noise heuristic:** the "only `last_login` changed" check now compares against a `pre_save` snapshot (the old post-save DB comparison could never detect changes and would skip indexing entirely).
+- **`find_similar` self-match:** the instance itself is excluded from similar results (previously it was usually the top hit); fetch budget accounts for self and legacy duplicates.
+- **Search with `models` filter:** single-model filters are pushed into the vector store and multi-model searches over-fetch, so filtered queries no longer return fewer than `limit` results.
+- **Thread pool shutdown:** the `thread` indexing backend uses a bounded **daemon** worker pool (does not block process exit the way `ThreadPoolExecutor` would).
+
+### Added
+- **FAISS persistence:** `VECTOR_STORE.OPTIONS: {"persist_path": ...}` saves the index (ids/metadata/embeddings) to disk atomically and reloads it on startup (trusted local path only — pickle).
+- **Thread pool:** `ASYNC_INDEXING.THREAD_POOL_SIZE` now actually bounds the `thread` backend via a shared **daemon** worker pool.
+- **Graph traversal limits:** `MAX_RELATED_ITEMS` (default `100`) caps related objects per relation and `MAX_TEXT_LENGTH` (default `8000`) caps indexed text length.
+- **Prefetch:** bulk indexing applies `select_related`/`prefetch_related` on first-level relations to avoid N+1 queries.
+- **Result field whitelist:** REST `data` payloads include only fields listed in the model config (`__all__` keeps previous behavior); unconfigured models return no field data.
+- **`reload_settings()`:** public API to re-read `GRAPH_SEARCH` at runtime.
+- **Startup warnings:** production warnings for session-auth + `csrf_exempt` endpoints and for the in-memory `SimpleScopedRateThrottle` under multi-process deployments.
+- **CI:** pytest workflow (Python 3.10–3.13 × Django 4.2/5.0/5.1), package build + `twine check`; pylint matrix updated to supported Python versions.
+
+### Changed
+- **FileDeltaCache:** atomic writes via tmp+rename and automatic purge of expired entries on startup.
+
 ## [0.3.3] — 2026-05-19
 
 Stable **0.3** release (replaces pre-releases `0.3.0a1` and `0.3.1a1`).

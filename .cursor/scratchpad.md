@@ -1,5 +1,5 @@
 # Scratchpad
 
-Release 0.3.3: setup.cfg, CHANGELOG, README, RELEASE_NOTES_0.3.3.md, dist/ built.
+Fixed security medium: post_delete captures pk/label before on_commit (Django clears instance.pk after delete).
 
-DONE — pytest 117 passed, 1 skipped; python -m build OK.
+DONE — test_delete_on_commit_passes_real_pk + related tests passed; pylint 10/10.

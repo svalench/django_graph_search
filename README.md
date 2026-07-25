@@ -5,6 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Django](https://img.shields.io/badge/Django-3.2%2B-092E20?logo=django)](https://djangoproject.com)
 [![Vector Search](https://img.shields.io/badge/Vector%20Search-ChromaDB%20%7C%20FAISS%20%7C%20Qdrant-blueviolet)](#supported-backends)
+[![Docs](https://img.shields.io/badge/site-svalench.github.io%2Fdjango__graph__search-blue)](https://svalench.github.io/django_graph_search/)
 
 > **Production-ready semantic vector search for Django** — searches across FK, M2M, and reverse relations by traversing your model graph. Pluggable backends: ChromaDB, FAISS, Qdrant.
 
@@ -45,27 +46,41 @@ pip install django-graph-search[cohere]
 pip install django-graph-search[all]
 ```
 
-## What's new in **0.3.3**
+## What's new in **0.3.4**
 
-Stable **0.3** line. Install with:
+Reliability & security hardening of the stable **0.3** line. Install with:
 
 ```bash
-pip install django-graph-search==0.3.3
+pip install django-graph-search==0.3.4
 ```
 
-Highlights vs **0.2.0** (full detail in [CHANGELOG.md](CHANGELOG.md)):
+Highlights vs **0.3.3** (full detail in [CHANGELOG.md](CHANGELOG.md) and [RELEASE_NOTES_0.3.4.md](RELEASE_NOTES_0.3.4.md)):
+
+| Area | Change |
+|------|--------|
+| **Upsert everywhere** | Re-indexing no longer raises `DuplicateIDError` (ChromaDB) or duplicates documents (FAISS). |
+| **Transaction-safe signals** | `AUTO_INDEX` dispatches via `transaction.on_commit`; delete captures `pk` before commit; bounded daemon thread pool (`THREAD_POOL_SIZE`). |
+| **API security** | `/api/search/similar/` now enforces `GRAPH_SEARCH["API"]` permissions/throttling; REST `data` exposes only configured fields. |
+| **FAISS persistence** | `VECTOR_STORE.OPTIONS: {"persist_path": ...}` saves and reloads the index across restarts. |
+| **Search quality** | Model filters are pushed into the vector store (filtered queries fill `limit`); `find_similar` excludes the object itself. |
+| **Indexing guardrails** | `MAX_RELATED_ITEMS` / `MAX_TEXT_LENGTH` limits, first-level prefetch against N+1. |
+
+<details>
+<summary><strong>0.3.3 highlights</strong> (stable 0.3 line vs 0.2.0)</summary>
 
 | Area | Change |
 |------|--------|
 | **REST hits** | Each result includes `score` (0.0–1.0) and `text`. Optional `min_score` query parameter filters weak matches; responses may include `min_score_applied`. |
 | **Indexing** | `weight_fields` is always honored, including with `fields: "__all__"`; weight `0.0` drops a field from indexed text. |
-| **Async / non-blocking signals** | `ASYNC_INDEXING` (Celery, `thread`, django-q) or default `AUTO_INDEX_NON_BLOCKING` (daemon thread for local SentenceTransformer). `AUTO_INDEX_SKIP_UPDATE_FIELDS` / per-model `skip_update_fields` skip noisy saves (`last_login`, etc.). |
+| **Async / non-blocking signals** | `ASYNC_INDEXING` (Celery, `thread` pool, django-q) or default `AUTO_INDEX_NON_BLOCKING` (pooled background threads for local SentenceTransformer). `AUTO_INDEX_SKIP_UPDATE_FIELDS` / per-model `skip_update_fields` skip noisy saves (`last_login`, etc.). Signals fire via `transaction.on_commit`. |
 | **Admin** | Sidebar **Поиск** and **Статус индексации**; index coverage page; `min_score` on admin search. |
 | **Backends / embeddings** | **Pgvector** (`[pgvector]`). **OpenAI** / **Cohere** (`[openai]`, `[cohere]`). Shared component registry per worker. |
 | **Scores** | ChromaDB / FAISS / Qdrant normalize distances to 0–1; Chroma respects collection metric (L2 / cosine / IP). |
 | **Security / API** | Optional `GRAPH_SEARCH["API"]`: permissions, throttling, `REQUIRE_AUTHENTICATION` (defaults stay open). |
 | **Validation** | Invalid `limit` → **400**; values above 1000 clamped with a log warning. |
 | **Fixes** | LangGraph empty `final_results`; Chroma metadata; delta cache TTL; conversational memory registry warning. |
+
+</details>
 
 ## Quick Start (5 minutes)
 
@@ -253,7 +268,7 @@ When ``AUTO_INDEX`` is on, saves can block on large graphs. Enable ``ASYNC_INDEX
 },
 ```
 
-With ``thread``, indexing runs in a daemon thread (no retries). With ``celery``, install Celery
+With ``thread``, indexing runs in a bounded daemon thread pool sized by ``THREAD_POOL_SIZE`` (no retries). With ``celery``, install Celery
 and register tasks; if Celery is missing, the task module falls back to synchronous execution with a warning.
 
 ### Production: zero impact on unrelated requests
@@ -271,7 +286,14 @@ Recommended for production web workers:
 | ``MODELS`` | Do **not** index ``auth.User`` (or similar) unless you need user search; login saves are noisy |
 | ``EMBEDDINGS`` | Prefer ``OpenAIEmbeddingBackend`` / ``CohereEmbeddingBackend`` in Gunicorn workers to avoid PyTorch in-process |
 | ``AUTO_INDEX_SKIP_UPDATE_FIELDS`` | Default ``["last_login"]`` — skips indexing when ``save(update_fields=...)`` touches only those fields |
-| ``AUTO_INDEX_NON_BLOCKING`` | Default ``True`` — with local **SentenceTransformer**, signal indexing runs in a **daemon thread** so login/API are not blocked (model may still load in background) |
+| ``AUTO_INDEX_NON_BLOCKING`` | Default ``True`` — with local **SentenceTransformer**, signal indexing runs in a **bounded daemon thread pool** so login/API are not blocked (model may still load in background) |
+| ``ASYNC_INDEXING.THREAD_POOL_SIZE`` | Default ``4`` — size of the ``thread`` backend **daemon** pool; unbounded per-save threads are no longer created |
+| ``MAX_RELATED_ITEMS`` | Default ``100`` — cap on related objects traversed per relation while building searchable text (protects against reverse-relation blowups) |
+| ``MAX_TEXT_LENGTH`` | Default ``8000`` — hard cap on indexed text length so embedding models don't silently truncate |
+
+Signal-driven indexing and deletion run via Django's ``transaction.on_commit``: background tasks re-read
+objects from the database, so they only run after the transaction commits (no lost indexing on rollback,
+no "object not found" races).
 
 Example minimal fix for login latency:
 
@@ -290,17 +312,17 @@ GRAPH_SEARCH = {
 
 Heavy components (vector store client, embedding backend, graph resolver) are **cached once per
 worker process** after the first search or index operation. Restart workers after changing
-``GRAPH_SEARCH`` backends or embedding models.
+``GRAPH_SEARCH`` backends or embedding models — or call ``django_graph_search.settings.reload_settings()``
+to re-read the configuration at runtime (useful in tests and long-lived shells).
 
 For local **sentence-transformers**, run indexing in a dedicated Celery worker if web workers
 must stay lean.
 
 ### Securing the REST API (optional)
 
-**Scope:** Settings under `GRAPH_SEARCH["API"]` apply only to **`GET /api/search/`**,
-**`/api/search/stream/`**, **`POST`** and **`DELETE /api/search/conversation/`**.
-They do **not** apply to **`/api/search/similar/.../`** — protect that route separately
-(e.g. Django middleware, URL-level decorators, nginx, or wrapping in your own authenticated view).
+**Scope:** Settings under `GRAPH_SEARCH["API"]` apply to **all** search endpoints:
+**`GET /api/search/`**, **`/api/search/stream/`**, **`POST`** and **`DELETE /api/search/conversation/`**,
+and **`/api/search/similar/.../`**.
 
 By default the search endpoints remain **public** (backward compatible). Configure
 ``GRAPH_SEARCH["API"]`` to add authentication, permissions, and throttling:
@@ -361,6 +383,10 @@ GRAPH_SEARCH = {
 | FAISS | High-speed CPU search, offline | No |
 | Qdrant | Production, large datasets, filtering | Yes |
 | **pgvector** (`django_graph_search.backends.PgvectorBackend`) | Same PostgreSQL as Django, no separate vector server | PostgreSQL + `vector` extension |
+
+> **FAISS persistence:** by default the FAISS index lives in process memory and is lost on restart. Pass `VECTOR_STORE.OPTIONS: {"persist_path": "vector_db/faiss.pkl"}` to save it to disk after every mutation and reload it on startup. The file is loaded with `pickle` — use only a **trusted local path** that untrusted users cannot overwrite (a malicious pickle is remote code execution).
+>
+> **Re-indexing semantics:** all backends use upsert semantics — re-saving an object overwrites its previous document (no duplicates, no `DuplicateIDError`).
 
 Install: `pip install django-graph-search[pgvector]`. Table is created automatically on first use (see backend docstring for `VECTOR_STORE.OPTIONS`).
 

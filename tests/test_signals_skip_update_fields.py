@@ -31,7 +31,9 @@ def _graph_search_skip_settings_fixture():
 
 
 @pytest.mark.django_db
-def test_skip_index_when_only_skip_update_fields_touched(graph_search_skip_settings):
+def test_skip_index_when_only_skip_update_fields_touched(
+    graph_search_skip_settings, django_capture_on_commit_callbacks
+):
     graph_search_skip_settings(
         {
             "MODELS": [
@@ -57,16 +59,20 @@ def test_skip_index_when_only_skip_update_fields_touched(graph_search_skip_setti
 
     with mock.patch("django_graph_search.indexer.Indexer._index_batch") as index_batch:
         product.category = cat2
-        product.save(update_fields=["category"])
+        with django_capture_on_commit_callbacks(execute=True):
+            product.save(update_fields=["category"])
         assert index_batch.call_count == 0
 
         product.name = "gadget"
-        product.save(update_fields=["name"])
+        with django_capture_on_commit_callbacks(execute=True):
+            product.save(update_fields=["name"])
         assert index_batch.call_count == 1
 
 
 @pytest.mark.django_db
-def test_global_auto_index_skip_update_fields(graph_search_skip_settings):
+def test_global_auto_index_skip_update_fields(
+    graph_search_skip_settings, django_capture_on_commit_callbacks
+):
     graph_search_skip_settings(
         {
             "MODELS": [{"model": "test_app.Product", "fields": ["name"]}],
@@ -86,5 +92,6 @@ def test_global_auto_index_skip_update_fields(graph_search_skip_settings):
 
     with mock.patch("django_graph_search.indexer.Indexer._index_batch") as index_batch:
         product.name = "b"
-        product.save(update_fields=["name"])
+        with django_capture_on_commit_callbacks(execute=True):
+            product.save(update_fields=["name"])
         assert index_batch.call_count == 0

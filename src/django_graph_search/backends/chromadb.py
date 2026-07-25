@@ -160,7 +160,9 @@ class ChromaDBBackend(BaseVectorStore):
         docs = list(documents)
         if not docs:
             return
-        self.collection.add(
+        # upsert: повторная индексация объекта (AUTO_INDEX при save) не должна
+        # падать с DuplicateIDError — документ с тем же id перезаписывается.
+        self.collection.upsert(
             ids=[doc.id for doc in docs],
             embeddings=[doc.embedding for doc in docs],
             metadatas=[doc.metadata for doc in docs],

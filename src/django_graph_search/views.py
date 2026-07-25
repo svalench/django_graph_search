@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 # Реестр бэкендов памяти диалога: один экземпляр на процесс (in-memory не шарится между воркерами).
 _memory_backend_lock = threading.Lock()
 _memory_backend_registry: Dict[Tuple[Any, ...], Any] = {}
+# Флаг однократного production-warning про inmemory-бэкенд (иначе warning на каждый POST).
+_inmemory_prod_warning_emitted = False
 
 
 def _parse_int_param(
@@ -324,11 +326,14 @@ class ConversationalSearchAPIView(SearchPermissionMixin, View):
         if denied is not None:
             return denied
         cfg = get_settings()
+        global _inmemory_prod_warning_emitted  # pylint: disable=global-statement
         if (
             cfg.conversational.enabled
             and cfg.conversational.memory_backend == "inmemory"
             and not django_settings.DEBUG
+            and not _inmemory_prod_warning_emitted
         ):
+            _inmemory_prod_warning_emitted = True
             warnings.warn(
                 "GRAPH_SEARCH CONVERSATIONAL.MEMORY_BACKEND='inmemory' is not safe for "
                 "multi-process production deployments (Gunicorn, uWSGI). "
@@ -574,7 +579,7 @@ def _format_event(event: Dict[str, Any], fmt: str) -> bytes:
     return (payload + "\n").encode("utf-8")
 
 
-class SimilarAPIView(View):
+class SimilarAPIView(SearchPermissionMixin, View):
     def get(
         self,
         request: HttpRequest,
@@ -583,6 +588,9 @@ class SimilarAPIView(View):
         *args: Any,
         **kwargs: Any,
     ) -> JsonResponse:
+        denied = self._check_access(request)
+        if denied is not None:
+            return denied
         if "." not in model:
             return JsonResponse({"error": "Model must be in 'app.Model' format."}, status=400)
         app_label, model_name = model.split(".", 1)

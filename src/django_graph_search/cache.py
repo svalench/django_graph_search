@@ -42,6 +42,11 @@ class FileDeltaCache(BaseDeltaCache):
     def __init__(self, directory: str) -> None:
         self.directory = directory
         os.makedirs(self.directory, exist_ok=True)
+        # Каталог растёт бесконечно без purge — чистим просроченное при старте.
+        try:
+            self.purge_expired()
+        except Exception:  # noqa: BLE001 - очистка не должна ломать инициализацию
+            pass
 
     def get(self, key: str) -> Optional[str]:
         path = self._key_to_path(key)
@@ -67,8 +72,12 @@ class FileDeltaCache(BaseDeltaCache):
             "value": value,
             "expires_at": time.time() + ttl if ttl and ttl > 0 else None,
         }
-        with open(path, "w", encoding="utf-8") as handle:
+        # Атомарная запись через tmp+rename: конкурентный читатель никогда
+        # не увидит обрезанный на середине файл.
+        tmp_path = f"{path}.{os.getpid()}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle)
+        os.replace(tmp_path, path)
 
     def delete(self, key: str) -> None:
         path = self._key_to_path(key)

@@ -28,10 +28,13 @@ DEFAULTS: Dict[str, Any] = {
     "ADMIN_SEARCH_ENABLED": True,
     "AUTO_INDEX": True,
     "AUTO_INDEX_SKIP_UPDATE_FIELDS": ["last_login"],
-    # Локальный sentence-transformers не блокирует HTTP: индексация в daemon thread.
+    # Локальный sentence-transformers не блокирует HTTP: индексация в daemon pool.
     "AUTO_INDEX_NON_BLOCKING": True,
     "DEFAULT_RESULTS_LIMIT": 20,
     "RELATION_DEPTH_DEFAULT": 2,
+    # Защита от N+1 и раздувания текста при обходе графа связей.
+    "MAX_RELATED_ITEMS": 100,
+    "MAX_TEXT_LENGTH": 8000,
     "DELTA_INDEXING": False,
     "CACHE": {
         "BACKEND": "file",
@@ -210,6 +213,8 @@ class GraphSearchConfig:
     cache: CacheConfig
     auto_index_skip_update_fields: Tuple[str, ...] = ("last_login",)
     auto_index_non_blocking: bool = True
+    max_related_items: int = 100
+    max_text_length: int = 8000
     langgraph: LangGraphConfig = field(default_factory=LangGraphConfig)
     conversational: ConversationalConfig = field(default_factory=ConversationalConfig)
     smart_indexing: SmartIndexingConfig = field(default_factory=SmartIndexingConfig)
@@ -349,6 +354,13 @@ def get_settings() -> GraphSearchConfig:
     else:
         skip_update_fields = tuple(str(f) for f in skip_update_raw)
 
+    max_related_items = int(merged.get("MAX_RELATED_ITEMS", 100))
+    if max_related_items < 1:
+        raise ConfigurationError("MAX_RELATED_ITEMS must be >= 1.")
+    max_text_length = int(merged.get("MAX_TEXT_LENGTH", 8000))
+    if max_text_length < 1:
+        raise ConfigurationError("MAX_TEXT_LENGTH must be >= 1.")
+
     # Validate backend paths early
     _load_backend(vector_store.backend)
     for profile in embeddings.values():
@@ -364,6 +376,8 @@ def get_settings() -> GraphSearchConfig:
         auto_index=bool(merged["AUTO_INDEX"]),
         auto_index_skip_update_fields=skip_update_fields,
         auto_index_non_blocking=bool(merged.get("AUTO_INDEX_NON_BLOCKING", True)),
+        max_related_items=max_related_items,
+        max_text_length=max_text_length,
         default_results_limit=int(merged["DEFAULT_RESULTS_LIMIT"]),
         delta_indexing=bool(merged.get("DELTA_INDEXING", False)),
         cache=cache_cfg,
@@ -546,4 +560,16 @@ def clear_graph_search_caches() -> None:
     from .component_registry import clear_component_registry
 
     clear_component_registry()
+
+
+def reload_settings() -> GraphSearchConfig:
+    """
+    Перечитать ``GRAPH_SEARCH`` в рантайме.
+
+    ``get_settings()`` кэшируется процессно; вызовите эту функцию после
+    изменения ``django.conf.settings.GRAPH_SEARCH``, чтобы применить новые
+    настройки без перезапуска воркера. Возвращает свежий конфиг.
+    """
+    clear_graph_search_caches()
+    return get_settings()
 
