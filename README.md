@@ -72,7 +72,17 @@ local embedding model, but still install the base dependencies and require
 provider credentials, network access, and may incur usage charges. Extras add
 dependencies; they do not select `VECTOR_STORE` or `EMBEDDINGS` in your settings.
 
-## What's new in **0.3.4**
+## What's new in 0.3.5
+
+This maintenance release improves installation instructions, distribution contents,
+and package validation, including dependency checks and ChromaDB/FAISS CI.
+See the [0.3.5 release notes](https://github.com/svalench/django_graph_search/blob/main/RELEASE_NOTES_0.3.5.md).
+
+```bash
+python -m pip install "django-graph-search[chromadb]==0.3.5"
+```
+
+## Previous release: 0.3.4
 
 Reliability & security hardening of the stable **0.3** line. Install with:
 

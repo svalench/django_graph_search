@@ -7,6 +7,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-09-11
+
+Maintenance release focused on reliable installation and distribution checks.
+
+- Clarify installation commands, optional backends, embedding choices, and prerequisites.
+- Improve package metadata and source-distribution contents.
+- Add installed-package tests for public imports, metadata, and bundled admin assets.
+- Preserve full dependency resolution and `pip check` in backend CI, alongside ChromaDB and FAISS tests.
+
+Details: [RELEASE_NOTES_0.3.5.md](RELEASE_NOTES_0.3.5.md).
+
 ## [0.3.4] — 2026-07-25
 
 Reliability and security hardening release: upsert semantics across all vector
