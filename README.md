@@ -2,15 +2,15 @@
 
 [![PyPI version](https://badge.fury.io/py/django-graph-search.svg)](https://badge.fury.io/py/django-graph-search)
 [![Python Version](https://img.shields.io/pypi/pyversions/django-graph-search.svg)](https://pypi.org/project/django-graph-search/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Django](https://img.shields.io/badge/Django-3.2%2B-092E20?logo=django)](https://djangoproject.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/svalench/django_graph_search/blob/main/LICENSE)
+[![Django](https://img.shields.io/badge/Django-4.2%2B-092E20?logo=django)](https://djangoproject.com)
 [![Vector Search](https://img.shields.io/badge/Vector%20Search-ChromaDB%20%7C%20FAISS%20%7C%20Qdrant-blueviolet)](#supported-backends)
 [![Docs](https://img.shields.io/badge/site-svalench.github.io%2Fdjango__graph__search-blue)](https://svalench.github.io/django_graph_search/)
 
-> **Production-ready semantic vector search for Django** — searches across FK, M2M, and reverse relations by traversing your model graph. Pluggable backends: ChromaDB, FAISS, Qdrant.
+> **Semantic vector search for Django** — searches across FK, M2M, and reverse relations by traversing your model graph. Pluggable backends: ChromaDB, FAISS, Qdrant, pgvector.
 
 ```bash
-pip install django-graph-search[chromadb]
+python -m pip install "django-graph-search[chromadb]"
 ```
 
 ## Why Django Graph Search?
@@ -23,38 +23,64 @@ Most Django search solutions (Haystack, Elasticsearch, full-text) treat each mod
 - **Admin UI** — semantic search inside `/admin/` out of the box
 - **REST API** — ready-to-use search endpoint
 
+Want to check relation traversal without downloading an embedding model? The
+[lightweight contributor test setup](#contributing) includes a test that creates
+a product with a category and tags, then verifies that their text is included in
+the document to be indexed.
+
 ## Installation
+
+Requires **Python 3.10+** and **Django 4.2+**. Use a virtual environment:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1` instead.
+Choose the extra for your vector store; installing the base package alone does
+not install a vector store. Quote extras so shells such as zsh do not interpret
+the brackets as filename patterns.
 
 ```bash
 # ChromaDB backend (recommended for local/dev)
-pip install django-graph-search[chromadb]
+python -m pip install "django-graph-search[chromadb]"
 
 # FAISS backend (fast CPU similarity, no server needed)
-pip install django-graph-search[faiss]
+python -m pip install "django-graph-search[faiss]"
 
 # Qdrant backend (production, scalable)
-pip install django-graph-search[qdrant]
+python -m pip install "django-graph-search[qdrant]"
 
 # pgvector (PostgreSQL extension)
-pip install django-graph-search[pgvector]
+python -m pip install "django-graph-search[pgvector]"
 
-# OpenAI / Cohere cloud embeddings (no local PyTorch model)
-pip install django-graph-search[openai]
-pip install django-graph-search[cohere]
+# ChromaDB with OpenAI / Cohere embeddings (configure the provider separately)
+python -m pip install "django-graph-search[chromadb,openai]"
+python -m pip install "django-graph-search[chromadb,cohere]"
 
 # All backends + LangGraph
-pip install django-graph-search[all]
+python -m pip install "django-graph-search[all]"
 ```
+
+**Download and service requirements:** `sentence-transformers` is a base
+dependency, so all normal installs (including cloud extras) install its
+dependencies, including PyTorch. The default embedding backend downloads its
+model on first use and needs network access then; download time and disk usage
+depend on the model and platform. OpenAI/Cohere configurations avoid loading a
+local embedding model, but still install the base dependencies and require
+provider credentials, network access, and may incur usage charges. Extras add
+dependencies; they do not select `VECTOR_STORE` or `EMBEDDINGS` in your settings.
 
 ## What's new in **0.3.4**
 
 Reliability & security hardening of the stable **0.3** line. Install with:
 
 ```bash
-pip install django-graph-search==0.3.4
+python -m pip install "django-graph-search[chromadb]==0.3.4"
 ```
 
-Highlights vs **0.3.3** (full detail in [CHANGELOG.md](CHANGELOG.md) and [RELEASE_NOTES_0.3.4.md](RELEASE_NOTES_0.3.4.md)):
+Highlights vs **0.3.3** (full detail in [CHANGELOG.md](https://github.com/svalench/django_graph_search/blob/main/CHANGELOG.md) and [RELEASE_NOTES_0.3.4.md](https://github.com/svalench/django_graph_search/blob/main/RELEASE_NOTES_0.3.4.md)):
 
 | Area | Change |
 |------|--------|
@@ -82,7 +108,13 @@ Highlights vs **0.3.3** (full detail in [CHANGELOG.md](CHANGELOG.md) and [RELEAS
 
 </details>
 
-## Quick Start (5 minutes)
+## Quick Start
+
+This walkthrough uses ChromaDB and local embeddings. Install the `[chromadb]`
+extra above first. It assumes an existing Django project with a migrated
+`shop.Product` model and some saved products, including `name`, `description`,
+`category` (FK), and `tags` (M2M). Replace the model label and field paths with
+your own; the package does not create a `shop` app or sample records.
 
 ### 1. Add to INSTALLED_APPS
 
@@ -164,15 +196,32 @@ urlpatterns = [
 python manage.py build_search_index
 ```
 
+This embeds the configured models' existing records. With the default local
+embedding backend, the first non-empty index build also downloads the model.
+
 ### 5. Search
+
+Start your local Django development server:
+
+```bash
+python manage.py runserver
+```
+
+In another terminal:
 
 ```bash
 # REST API
-GET /api/search/?q=wireless+headphones&models=shop.Product&limit=5&min_score=0.75
+curl "http://127.0.0.1:8000/api/search/?q=wireless+headphones&models=shop.Product&limit=5"
 
-# Find similar items
-GET /api/search/similar/shop.Product/42/?limit=5
+# Find similar items (replace 42 with an existing product's primary key)
+curl "http://127.0.0.1:8000/api/search/similar/shop.Product/42/?limit=5"
 ```
+
+The search endpoint returns JSON with a `results` list. The matches depend on
+your records and embedding model; an empty index returns no matches. Add
+`&min_score=0.75` only if you want to filter out lower-scoring matches.
+The REST endpoints are open by default: configure [API access controls](#securing-the-rest-api-optional)
+before exposing them outside local development.
 
 ## How It Works
 
@@ -186,7 +235,7 @@ Django ORM Model Graph
   Text Concatenation    <- fields + related fields merged into one document
         │
         ▼
-  Sentence Transformer  <- multilingual embeddings (768-dim vectors)
+  Sentence Transformer  <- embeddings (dimensions depend on the model)
         │
         ▼
   Vector Store          <- ChromaDB / FAISS / Qdrant
@@ -388,7 +437,7 @@ GRAPH_SEARCH = {
 >
 > **Re-indexing semantics:** all backends use upsert semantics — re-saving an object overwrites its previous document (no duplicates, no `DuplicateIDError`).
 
-Install: `pip install django-graph-search[pgvector]`. Table is created automatically on first use (see backend docstring for `VECTOR_STORE.OPTIONS`).
+Install: `python -m pip install "django-graph-search[pgvector]"`. Table is created automatically on first use (see backend docstring for `VECTOR_STORE.OPTIONS`).
 
 ## Delta Indexing & Cache
 
@@ -634,13 +683,55 @@ custom subscribers you register from your own apps.
 
 Pull requests are welcome! Please open an issue first to discuss significant changes.
 
-1. Fork the repo
-2. `git checkout -b feature/my-feature`
-3. Commit and open a PR
+Fork and clone the repository, then run these commands from its root in a
+virtual environment (activation instructions are in [Installation](#installation)):
+
+```bash
+git checkout -b feature/my-feature
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+
+# Lightweight core suite: install test requirements, not the ML dependency tree.
+python -m pip install "django>=4.2" "pytest>=9.0.0" "pytest-django>=4.0" "numpy>=1.26"
+python -m pip install --no-deps -e .
+python -m pytest tests/ -q -ra
+```
+
+`--no-deps` is intentional **only for this test environment**, not a supported
+end-user installation. The suite uses SQLite, dummy embeddings, mocked cloud
+clients, and the in-tree LangGraph fallback: no API keys, model downloads, or
+external services are needed. NumPy is required by the mocked FAISS tests.
+Tests needing real ChromaDB, FAISS, or PostgreSQL skip when unavailable; skipped
+tests are not integration coverage.
+
+For a small, model-free check of the relation traversal shown above:
+
+```bash
+python -m pytest tests/test_resolver.py::GraphResolverTests::test_build_searchable_text_includes_relations -q
+```
+
+To also run the existing local ChromaDB/FAISS integration tests, install
+`"chromadb>=0.5.0"` and `"faiss-cpu>=1.7.4"` with `python -m pip install`, then
+rerun the suite. This still does not exercise real embedding models or the
+PostgreSQL integration test.
+
+Check both distribution formats and their metadata before submitting a PR:
+
+```bash
+python -m pip install build twine
+python -m build
+python -m twine check --strict dist/*
+```
+
+CI runs the lightweight Python/Django matrix, a separate ChromaDB/FAISS job
+with a normal full-dependency install and `pip check`, and a wheel-install smoke
+test for imports, metadata, templates, and static assets. Commit your changes
+and open a PR with the test results and any skips.
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT — see [LICENSE](https://github.com/svalench/django_graph_search/blob/main/LICENSE)
 
 ## Author
 
