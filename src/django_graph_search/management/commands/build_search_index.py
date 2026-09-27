@@ -28,7 +28,7 @@ class Command(BaseCommand):
         for cfg in model_cfgs:
             app_label, model_name = cfg.model.split(".", 1)
             model_cls = apps.get_model(app_label, model_name)
-            count = indexer.index_queryset(model_cls.objects.all(), cfg)
+            count = indexer.index_queryset(model_cls._default_manager.all(), cfg)
             result[cfg.model] = count
 
         for model_name, count in result.items():

@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, Optional, Tuple, Union
 
 from django.apps import apps
 from django.conf import settings as django_settings
+from django.core.exceptions import ValidationError
 from django.http import HttpRequest, JsonResponse, StreamingHttpResponse
 from django.utils.decorators import method_decorator
 from django.views import View
@@ -239,7 +240,7 @@ class SearchAPIView(SearchPermissionMixin, View):
         if not query:
             return JsonResponse({"error": "Parameter 'q' is required."}, status=400)
         models = request.GET.get("models")
-        model_list = [m.strip() for m in models.split(",")] if models else None
+        model_list = [m.strip() for m in models.split(",") if m.strip()] if models else None
         limit_value, err = _parse_int_param(
             request.GET.get("limit"),
             "limit",
@@ -487,7 +488,7 @@ class StreamingSearchAPIView(SearchPermissionMixin, View):
             return err
 
         hub = EventHub()
-        events_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
+        events_queue: "queue.Queue[Union[Dict[str, Any], object]]" = queue.Queue()
         sentinel = object()
         # Bridge hub -> queue so the request thread can drain it.
         hub.subscribe(events_queue.put)
@@ -519,7 +520,7 @@ class StreamingSearchAPIView(SearchPermissionMixin, View):
             )
             while True:
                 event = events_queue.get()
-                if event is sentinel:
+                if event is sentinel or not isinstance(event, dict):
                     break
                 # Drop internal events when configured to do so (final event
                 # is still emitted below).
@@ -591,15 +592,9 @@ class SimilarAPIView(SearchPermissionMixin, View):
         denied = self._check_access(request)
         if denied is not None:
             return denied
-        if "." not in model:
-            return JsonResponse({"error": "Model must be in 'app.Model' format."}, status=400)
-        app_label, model_name = model.split(".", 1)
-        model_cls = apps.get_model(app_label, model_name)
-        if model_cls is None:
-            return JsonResponse({"error": "Model not found."}, status=404)
-        instance = model_cls.objects.filter(pk=pk).first()
-        if instance is None:
-            return JsonResponse({"error": "Object not found."}, status=404)
+        instance, err = self._resolve_instance(model, pk)
+        if err is not None:
+            return err
         limit_value, err = _parse_int_param(
             request.GET.get("limit"),
             "limit",
@@ -620,3 +615,25 @@ class SimilarAPIView(SearchPermissionMixin, View):
             },
             status=200,
         )
+
+    @staticmethod
+    def _resolve_instance(model: str, pk: str) -> Tuple[Any, Optional[JsonResponse]]:
+        """Найти объект по 'app.Model' и pk; ошибки клиента — 400/404, а не 500."""
+        if "." not in model:
+            return None, JsonResponse(
+                {"error": "Model must be in 'app.Model' format."}, status=400
+            )
+        app_label, model_name = model.split(".", 1)
+        # apps.get_model не возвращает None — бросает LookupError на неизвестной модели.
+        try:
+            model_cls = apps.get_model(app_label, model_name)
+        except LookupError:
+            return None, JsonResponse({"error": "Model not found."}, status=404)
+        # Невалидный pk для типа поля (например 'abc' для AutoField).
+        try:
+            instance = model_cls._default_manager.filter(pk=pk).first()
+        except (ValueError, TypeError, ValidationError):
+            return None, JsonResponse({"error": "Invalid 'pk' value."}, status=400)
+        if instance is None:
+            return None, JsonResponse({"error": "Object not found."}, status=404)
+        return instance, None

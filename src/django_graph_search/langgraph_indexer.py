@@ -31,7 +31,7 @@ from django.db import models
 from .backends.base import Document
 from .components import ComponentMixin
 from .graph_resolver import GraphResolver
-from .indexer import make_doc_id
+from .indexer import make_doc_id, serialize_pk
 from .settings import GraphSearchConfig, ModelConfig
 from .utils import hash_text
 
@@ -211,7 +211,7 @@ def persist_node(
                 embedding=embedding,
                 metadata={
                     "model": instance._meta.label,
-                    "pk": instance.pk,
+                    "pk": serialize_pk(instance.pk),
                     "text": doc["text"],
                 },
                 text=doc["text"],
@@ -309,7 +309,7 @@ class SmartIndexer(ComponentMixin):
         for model_cfg in self.config.models:
             app_label, model_name = model_cfg.model.split(".", 1)
             model_cls = apps.get_model(app_label, model_name)
-            count = self.index_queryset(model_cls.objects.all(), model_cfg)
+            count = self.index_queryset(model_cls._default_manager.all(), model_cfg)
             result[model_cfg.model] = count
         return result
 

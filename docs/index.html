@@ -84,7 +84,7 @@
       <a href="#features">Features</a>
       <a href="#quickstart">Quickstart</a>
       <a href="#backends">Backends</a>
-      <a href="#release">0.3.4</a>
+      <a href="#release">0.3.6</a>
       <a href="https://github.com/svalench/django_graph_search">GitHub</a>
     </nav>
   </div>
@@ -175,19 +175,18 @@ $ curl <span class="tok-s">"http://localhost:8000/api/search/?q=red+phone&amp;li
 
 <section id="release">
   <div class="wrap">
-    <h2>What's new in 0.3.4</h2>
-    <p class="section-sub">Reliability &amp; security hardening — fully backward-compatible with 0.3.x.</p>
+    <h2>What's new in 0.3.6</h2>
+    <p class="section-sub">Bug-fix &amp; security release. <strong>Rebuild your index after upgrading.</strong></p>
     <ul class="checks">
-      <li><strong>Upsert semantics on every backend</strong> — re-saving an object can no longer raise <code>DuplicateIDError</code> or create duplicates</li>
-      <li><strong>Transaction-safe signals</strong> — indexing and deletion run via <code>transaction.on_commit</code>; rollback can't corrupt the index</li>
-      <li><strong><code>/api/search/similar/</code> access control</strong> — now enforces the same permissions and throttling as other endpoints</li>
-      <li><strong>FAISS persistence</strong> — save the index to disk with <code>persist_path</code>, reload on startup</li>
-      <li><strong>Graph traversal limits</strong> — <code>MAX_RELATED_ITEMS</code> and <code>MAX_TEXT_LENGTH</code> guard against runaway indexing</li>
-      <li><strong>Filtered searches fill <code>limit</code></strong> — model filters are pushed into the vector store; <code>find_similar</code> excludes the object itself</li>
-      <li><strong>Result field whitelist</strong> — REST <code>data</code> exposes only fields from your model config</li>
-      <li><strong>CI matrix</strong> — Python 3.10–3.13 × Django 4.2/5.0/5.1, 131 tests, pylint 10/10</li>
+      <li><strong>Indexed-text leak closed</strong> — with <code>follow_relations=True</code> unlisted fields of the root object (e.g. the <code>auth.User</code> password hash) no longer end up in the index or in the REST <code>text</code> field; <code>password</code> is never indexed</li>
+      <li><strong>Qdrant backend actually works</strong> — UUID5 point ids, correct <code>distance</code> resolution (<code>"Cosine"</code> used to raise), <code>query_points</code> on modern clients</li>
+      <li><strong><code>LANGGRAPH.TIMEOUT_SECONDS</code> enforced</strong> — hard limit around every LLM call with fallback to deterministic search</li>
+      <li><strong>Fewer 500s</strong> — <code>/similar/</code> returns 404/400 for unknown model / invalid pk; stale index entries, UUID primary keys and a missing <code>django.contrib.admin</code> no longer crash</li>
+      <li><strong>Faster result hydration</strong> — one <code>pk__in</code> query per model instead of one per hit</li>
+      <li><strong>Real-client integration tests</strong> — Qdrant <code>:memory:</code>, ChromaDB, FAISS end-to-end (no Docker)</li>
+      <li><strong>CI matrix</strong> — Python 3.10–3.13 × Django 4.2/5.1/5.2/6.0, 160+ tests, pylint 10/10, mypy clean</li>
     </ul>
-    <p style="margin-top:24px"><a href="https://github.com/svalench/django_graph_search/blob/main/RELEASE_NOTES_0.3.4.md">Full release notes →</a></p>
+    <p style="margin-top:24px"><a href="https://github.com/svalench/django_graph_search/blob/main/RELEASE_NOTES_0.3.6.md">Full release notes →</a></p>
   </div>
 </section>
 

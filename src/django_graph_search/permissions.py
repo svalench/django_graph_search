@@ -237,6 +237,7 @@ class SimpleScopedRateThrottle:
         now = time.monotonic()
 
         with self._lock:
+            self._evict_stale_windows(now)
             dq = self._windows.setdefault(key, deque())
             while dq and now - dq[0] > window:
                 dq.popleft()
@@ -244,6 +245,26 @@ class SimpleScopedRateThrottle:
                 return False
             dq.append(now)
         return True
+
+    # Реестр окон растёт на каждый новый IP; периодически выкидываем ключи,
+    # у которых последнее обращение старше самого длинного окна (1 час).
+    _EVICT_EVERY_SECONDS = 60.0
+    _MAX_WINDOW_SECONDS = 3600.0
+    _last_evict: float = 0.0
+
+    @classmethod
+    def _evict_stale_windows(cls, now: float) -> None:
+        """Удалить ключи без свежих обращений (вызывать под ``_lock``)."""
+        if now - cls._last_evict < cls._EVICT_EVERY_SECONDS:
+            return
+        cls._last_evict = now
+        stale = [
+            key
+            for key, dq in cls._windows.items()
+            if not dq or now - dq[-1] > cls._MAX_WINDOW_SECONDS
+        ]
+        for key in stale:
+            del cls._windows[key]
 
     def wait(self) -> int:
         """

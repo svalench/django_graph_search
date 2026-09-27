@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
-from django.utils.module_loading import import_string
 
+from ...component_registry import get_shared_components
 from ...settings import get_settings
 
 
@@ -9,8 +9,8 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         config = get_settings()
-        backend_cls = import_string(config.vector_store.backend)
-        vector_store = backend_cls(**config.vector_store.options)
+        # Shared-экземпляр стора: отдельный backend_cls(...) для in-memory
+        # бэкендов очищал бы «чужую» пустую коллекцию.
+        _cfg, vector_store, _embedding, _resolver = get_shared_components(config)
         vector_store.clear_collection()
         self.stdout.write(self.style.SUCCESS("Search index cleared."))
-

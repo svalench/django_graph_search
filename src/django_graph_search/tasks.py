@@ -38,7 +38,7 @@ def index_instance_task_fn(app_label: str, model_name: str, pk: Any) -> None:
         log.debug("Skip async index: no model config for %s", model_cls._meta.label)
         return
     try:
-        instance = model_cls.objects.get(pk=pk)
+        instance = model_cls._default_manager.get(pk=pk)
     except model_cls.DoesNotExist:
         log.warning("Async index skip: %s.%s pk=%s not found", app_label, model_name, pk)
         return

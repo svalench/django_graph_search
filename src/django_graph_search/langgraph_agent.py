@@ -21,13 +21,61 @@ Design goals:
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional, TypedDict
+import queue
+import threading
+from typing import Any, Callable, Dict, List, Optional, TypedDict, TypeVar
 
 from .events import EventHub
 from .llm.base import BaseLLMBackend, RerankCandidate
 from .settings import GraphSearchConfig
 
 log = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+class LLMTimeoutError(TimeoutError):
+    """Вызов LLM не уложился в LANGGRAPH.TIMEOUT_SECONDS."""
+
+
+def call_with_timeout(fn: Callable[[], _T], timeout: Optional[float]) -> _T:
+    """
+    Выполнить ``fn`` с жёстким лимитом времени.
+
+    Вызов уходит в daemon-поток: если бэкенд LLM «завис» (сеть, медленная модель),
+    запрос пользователя не блокируется дольше ``timeout`` — узел графа получает
+    :class:`LLMTimeoutError` и откатывается к детерминированному пути. Поток
+    daemon, поэтому зависший вызов не мешает остановке процесса.
+
+    При ``timeout`` None/0 вызов выполняется синхронно без обёртки.
+    """
+    if not timeout or timeout <= 0:
+        return fn()
+
+    result_box: "queue.Queue[tuple[bool, Any]]" = queue.Queue(maxsize=1)
+
+    def _runner() -> None:
+        try:
+            result_box.put((True, fn()))
+        except BaseException as exc:  # noqa: BLE001 - пробрасываем в вызывающий поток
+            result_box.put((False, exc))
+
+    worker = threading.Thread(target=_runner, name="dgs-llm-call", daemon=True)
+    worker.start()
+    try:
+        ok, payload = result_box.get(timeout=timeout)
+    except queue.Empty as exc:
+        raise LLMTimeoutError(f"LLM call exceeded {timeout:g}s") from exc
+    if ok:
+        return payload
+    raise payload
+
+
+def _llm_timeout(config: GraphSearchConfig, llm: BaseLLMBackend) -> Optional[float]:
+    """Таймаут вызова: явный у бэкенда (LLM.OPTIONS.timeout) или LANGGRAPH.TIMEOUT_SECONDS."""
+    if llm.timeout:
+        return llm.timeout
+    return float(config.langgraph.timeout_seconds or 0) or None
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +142,12 @@ def expand_query_node(
         return state
     max_variants = config.langgraph.max_expanded_queries
     try:
-        variants = llm.expand_query(base, models=state.get("models"), max_variants=max_variants)
+        variants = call_with_timeout(
+            lambda: llm.expand_query(
+                base, models=state.get("models"), max_variants=max_variants
+            ),
+            _llm_timeout(config, llm),
+        )
     except Exception as exc:  # noqa: BLE001 - LLM errors must never poison search.
         log.warning("Query expansion failed, falling back to original query: %s", exc)
         state.setdefault("errors", []).append(f"expand_query: {exc}")
@@ -131,12 +184,23 @@ def vector_search_node(
     queries = [q for q in queries if q]
     limit = int(state.get("limit") or 0) or 20
 
+    # Фильтр по моделям: одна модель — на стороне стора; несколько — over-fetch,
+    # иначе после пост-фильтрации возвращалось бы меньше limit результатов.
+    models_filter = state.get("models")
+    store_filters: Optional[Dict[str, Any]] = None
+    fetch_limit = limit
+    if models_filter:
+        if len(models_filter) == 1:
+            store_filters = {"model": models_filter[0]}
+        else:
+            fetch_limit = min(max(limit * 10, limit), 5000)
+
     # Multi-query merge keyed by document id.
     merged: Dict[str, Any] = {}
     for q in queries:
         try:
             vec = embedding_backend.embed(q, is_query=True)
-            hits = vector_store.search(vec, limit=limit, filters=None)
+            hits = vector_store.search(vec, limit=fetch_limit, filters=store_filters)
         except Exception as exc:  # noqa: BLE001
             log.warning("Vector search failed for query=%r: %s", q, exc)
             state.setdefault("errors", []).append(f"vector_search: {exc}")
@@ -149,7 +213,6 @@ def vector_search_node(
 
     results = list(merged.values())
 
-    models_filter = state.get("models")
     if models_filter:
         allowed = set(models_filter)
         results = [item for item in results if item.metadata.get("model") in allowed]
@@ -188,10 +251,13 @@ def rerank_results_node(
         for item in head
     ]
     try:
-        reranked = llm.rerank(
-            state.get("normalized_query") or "",
-            rerank_inputs,
-            top_k=top_k,
+        reranked = call_with_timeout(
+            lambda: llm.rerank(
+                state.get("normalized_query") or "",
+                rerank_inputs,
+                top_k=top_k,
+            ),
+            _llm_timeout(config, llm),
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("Reranking failed, keeping vector order: %s", exc)
@@ -457,6 +523,8 @@ def resolve_graph_factory(dotted_path: str) -> Callable[..., Any]:
 
 __all__ = [
     "SearchState",
+    "LLMTimeoutError",
+    "call_with_timeout",
     "analyze_query_node",
     "expand_query_node",
     "vector_search_node",

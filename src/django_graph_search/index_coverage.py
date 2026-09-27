@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Optional
 
 from django.apps import apps
-from django.utils.module_loading import import_string
 
 from .settings import GraphSearchConfig, get_settings
 
@@ -48,8 +47,11 @@ def get_index_coverage(
     """
     cfg = config or get_settings()
     if vector_store is None:
-        backend_cls = import_string(cfg.vector_store.backend)
-        vector_store = backend_cls(**cfg.vector_store.options)
+        # Тот же экземпляр стора, что и у индексатора/поисковика: для in-memory
+        # бэкендов (FAISS без persist, Chroma ephemeral) новый экземпляр был бы пустым.
+        from .component_registry import get_shared_components
+
+        _cfg, vector_store, _embedding, _resolver = get_shared_components(cfg)
 
     rows: List[IndexCoverageRow] = []
     total_db = 0
@@ -59,7 +61,7 @@ def get_index_coverage(
         app_label, model_name = model_cfg.model.split(".", 1)
         model_cls = apps.get_model(app_label, model_name)
         label = model_cls._meta.label
-        db_count = model_cls.objects.count()
+        db_count = model_cls._default_manager.count()
         indexed_count = vector_store.count_documents({"model": label})
         total_db += db_count
         total_indexed += indexed_count

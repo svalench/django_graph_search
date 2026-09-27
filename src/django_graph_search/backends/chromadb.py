@@ -213,7 +213,17 @@ class ChromaDBBackend(BaseVectorStore):
         self.collection.delete(ids=ids)
 
     def clear_collection(self) -> None:
-        self.collection.delete(where={})
+        # Пустой where={} в актуальных версиях Chroma невалиден
+        # ("Expected where to have exactly one operator") — удаляем по id батчами.
+        batch_size = 500
+        while True:
+            data = self.collection.get(limit=batch_size, include=[])
+            ids = list(data.get("ids") or [])
+            if not ids:
+                break
+            self.collection.delete(ids=ids)
+            if len(ids) < batch_size:
+                break
 
     def count_documents(self, filters: Optional[Dict[str, Any]] = None) -> int:
         if filters:
