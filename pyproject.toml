@@ -2,3 +2,9 @@
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: тесты на реальных клиентах векторных бэкендов (Qdrant/Chroma/FAISS); пропускаются без extras",
+]
+

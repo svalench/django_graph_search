@@ -4,18 +4,20 @@ from typing import Optional, Tuple
 
 from django.utils.module_loading import import_string
 
+from .backends.base import BaseVectorStore
 from .component_registry import get_shared_components
+from .embeddings.base import BaseEmbeddingBackend
 from .graph_resolver import GraphResolver
 from .settings import GraphSearchConfig, get_settings
 
 
 def build_components(
     config: Optional[GraphSearchConfig],
-    vector_store,
-    embedding_backend,
+    vector_store: Optional[BaseVectorStore],
+    embedding_backend: Optional[BaseEmbeddingBackend],
     resolver: Optional[GraphResolver],
     embedding_profile: Optional[str],
-) -> Tuple[GraphSearchConfig, object, object, GraphResolver]:
+) -> Tuple[GraphSearchConfig, BaseVectorStore, BaseEmbeddingBackend, GraphResolver]:
     config = config or get_settings()
     if vector_store is None and embedding_backend is None and resolver is None:
         return get_shared_components(config, embedding_profile)

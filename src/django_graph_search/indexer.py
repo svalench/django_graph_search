@@ -19,6 +19,19 @@ def make_doc_id(model_label: str, pk: object) -> str:
     return f"{model_label}:{pk}"
 
 
+def serialize_pk(pk: object) -> object:
+    """
+    Привести pk к типу, который принимают metadata всех бэкендов
+    (Chroma — только str/int/float/bool, pgvector — JSON). UUID и прочие
+    объекты становятся строкой; int/str остаются как есть.
+    """
+    if isinstance(pk, bool):
+        return str(pk)
+    if isinstance(pk, (int, str)):
+        return pk
+    return str(pk)
+
+
 def get_indexer(
     config: Optional[GraphSearchConfig] = None,
     **kwargs,
@@ -128,7 +141,7 @@ class Indexer(ComponentMixin):
         result = {}
         for model_cfg in self.config.models:
             model_cls = self._get_model_class(model_cfg.model)
-            count = self.index_queryset(model_cls.objects.all(), model_cfg)
+            count = self.index_queryset(model_cls._default_manager.all(), model_cfg)
             result[model_cfg.model] = count
         return result
 
@@ -159,7 +172,7 @@ class Indexer(ComponentMixin):
                     embedding=embedding,
                     metadata={
                         "model": model_label,
-                        "pk": instance.pk,
+                        "pk": serialize_pk(instance.pk),
                         "text": text,
                     },
                     text=text,
@@ -177,8 +190,8 @@ class Indexer(ComponentMixin):
         if "." not in model_path:
             raise ConfigurationError("Model path must be in 'app.Model' format.")
         app_label, model_name = model_path.split(".", 1)
-        model_cls = apps.get_model(app_label, model_name)
-        if model_cls is None:
-            raise ConfigurationError(f"Model '{model_path}' not found.")
-        return model_cls
+        try:
+            return apps.get_model(app_label, model_name)
+        except LookupError as exc:
+            raise ConfigurationError(f"Model '{model_path}' not found.") from exc
 

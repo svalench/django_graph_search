@@ -7,6 +7,41 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-09-27
+
+Bug-fix and security release: closes an indexed-text leak, makes the Qdrant backend actually work, enforces `LANGGRAPH.TIMEOUT_SECONDS`, and adds real-client integration tests.
+
+```bash
+pip install django-graph-search==0.3.6
+```
+
+Details: [RELEASE_NOTES_0.3.6.md](RELEASE_NOTES_0.3.6.md).
+
+### Security
+- **Indexed text leak:** with `follow_relations=True` the resolver re-appended *all* concrete fields of the root object (not just the configured `fields`) to the indexed text — for `auth.User` this put the password hash into the vector store and exposed it via the REST `text` field. The root object now contributes only its configured fields; `password` is never indexed for related objects or `fields="__all__"`. **Rebuild the index** after upgrading.
+
+### Fixed
+- **`weight_fields` = 0 with relations:** fields excluded via zero weight no longer re-enter the text through the relation walk.
+- **App startup without `django.contrib.admin`:** `ready()` no longer raises `LookupError` when the admin app is not installed (`ADMIN_SEARCH_ENABLED` is skipped).
+- **`/api/search/similar/`:** unknown model returns `404` and an invalid `pk` returns `400` instead of a `500`.
+- **Qdrant:** point ids are now UUID5 derived from the document id (Qdrant rejects arbitrary strings); original ids are kept in the payload. Uses `query_points` when available (`search` is deprecated).
+- **Qdrant `distance` option:** the default `"Cosine"` never resolved (`Distance` enum members are `COSINE`/`EUCLID`/`DOT`), so every collection creation failed. Values are now matched case-insensitively; `l2`/`euclidean`/`ip`/`inner_product` aliases are accepted.
+- **`LANGGRAPH.TIMEOUT_SECONDS` is now enforced.** Previously it was validated but never used. The value is passed to the LLM backend as `self.timeout` (unless `LLM.OPTIONS["timeout"]` is set) and, independently, every `expand_query`/`rerank` call is bounded by it — an overrunning call is abandoned and the node falls back to the original query / vector order.
+- **ChromaDB `clear_collection`:** deletes by ids in batches instead of `where={}`, which recent Chroma versions reject.
+- **Non-primitive primary keys:** UUID (and other) pks are stored as strings in vector metadata so JSON/Chroma backends accept them.
+- **LangGraph `vector_search`:** the `models` filter is pushed to the store (single model) or over-fetched (multiple models), matching the linear path.
+- **Stale index entries:** hits referencing models no longer installed are returned without `data` instead of raising.
+- **`clear_search_index` / index coverage:** use the shared vector-store instance, so in-memory backends (FAISS without `persist_path`, ephemeral Chroma) are actually cleared/counted.
+- **Custom managers:** ORM access goes through `_default_manager` instead of assuming `.objects`.
+- `DEFAULT_RESULTS_LIMIT` is validated (`>= 1`).
+
+### Changed
+- **Result hydration:** ORM objects for search hits are loaded with one `pk__in` query per model instead of one query per hit.
+- `SimpleScopedRateThrottle` evicts stale per-IP windows to bound memory in long-running processes.
+- Component types (`vector_store`, `embedding_backend`) are annotated; `mypy` passes cleanly.
+- **Supported versions:** classifiers and CI matrix now cover Django 4.2 / 5.1 / 5.2 / 6.0 (5.0 dropped — EOL) and Python 3.10–3.13; README badge corrected from "Django 3.2+" to "4.2+" (matches `install_requires`).
+- **Integration tests** for real vector-store clients without Docker: Qdrant (`:memory:`), ChromaDB (persistent client in `tmp_path`), FAISS end-to-end with a UUID-pk model. Marked `integration`; skipped when the extra is not installed. CI installs the `qdrant` extra.
+
 ## [0.3.5] - 2026-09-11
 
 Maintenance release focused on reliable installation and distribution checks.

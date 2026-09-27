@@ -32,6 +32,12 @@ class BaseLLMBackend(ABC):
     def __init__(self, model: Optional[str] = None, **options: Any) -> None:
         self.model = model
         self.options = options
+        # Таймаут одного вызова LLM в секундах. Заполняется фабрикой из
+        # LANGGRAPH.TIMEOUT_SECONDS, если бэкенд не задал его сам через OPTIONS.
+        # Реальные бэкенды должны пробрасывать его в свой HTTP-клиент; узлы графа
+        # дополнительно принудительно прерывают ожидание по истечении срока.
+        raw_timeout = options.get("timeout")
+        self.timeout: Optional[float] = float(raw_timeout) if raw_timeout else None
 
     @abstractmethod
     def expand_query(

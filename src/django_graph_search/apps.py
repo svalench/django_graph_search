@@ -1,6 +1,6 @@
 import warnings
 
-from django.apps import AppConfig
+from django.apps import AppConfig, apps
 from django.conf import settings as django_settings
 
 
@@ -14,13 +14,15 @@ class DjangoGraphSearchConfig(AppConfig):
         from .settings import get_settings  # noqa: WPS433
         from . import signals  # noqa: WPS433,F401
 
-        get_settings()
-        if get_settings().admin_search_enabled:
+        cfg = get_settings()
+        # Без django.contrib.admin регистрировать раздел админки некуда:
+        # admin.site лениво импортирует AppConfig «admin» и падает LookupError.
+        if cfg.admin_search_enabled and apps.is_installed("django.contrib.admin"):
             from . import admin  # noqa: WPS433
 
             admin.setup_admin_site()
 
-        self._emit_production_security_warnings(get_settings())
+        self._emit_production_security_warnings(cfg)
 
     @staticmethod
     def _emit_production_security_warnings(cfg) -> None:

@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
 from ..exceptions import BackendError
 from .base import BaseVectorStore, Document, SearchResult
+
+# Qdrant принимает id точек только как unsigned int или UUID. Наши id вида
+# "app.Model:pk" — строки, поэтому храним детерминированный UUID5 от них,
+# а исходный doc_id кладём в payload для обратного маппинга.
+_DOC_ID_PAYLOAD_KEY = "_dgs_doc_id"
+_QDRANT_NAMESPACE = uuid.UUID("6f1b6c0e-7f7f-4b5a-9a1d-0d1c2b3a4f55")
+
+
+def qdrant_point_id(doc_id: str) -> str:
+    """Детерминированный UUID точки Qdrant для строкового doc_id."""
+    return str(uuid.uuid5(_QDRANT_NAMESPACE, doc_id))
 
 
 class QdrantBackend(BaseVectorStore):
@@ -22,18 +34,46 @@ class QdrantBackend(BaseVectorStore):
         self.qmodels = qmodels
         self.collection_name = collection_name
         self.client = QdrantClient(**options)
-        self.distance = distance
+        self.distance = self._resolve_distance(distance)
+
+    def _resolve_distance(self, distance: str) -> Any:
+        """
+        Привести строку из настроек к ``qmodels.Distance``.
+
+        Члены enum называются COSINE/EUCLID/DOT/MANHATTAN, а их значения —
+        "Cosine"/"Euclid"/"Dot"/"Manhattan"; принимаем любой регистр и синонимы.
+        """
+        raw = str(distance or "Cosine").strip()
+        aliases = {"cos": "Cosine", "l2": "Euclid", "euclidean": "Euclid", "ip": "Dot",
+                   "inner_product": "Dot"}
+        normalized = aliases.get(raw.lower(), raw)
+        enum_cls = self.qmodels.Distance
+        for member in enum_cls:
+            if member.name.lower() == normalized.lower() or str(
+                member.value
+            ).lower() == normalized.lower():
+                return member
+        raise BackendError(
+            f"Unknown Qdrant distance {distance!r}; "
+            f"expected one of {[m.value for m in enum_cls]}."
+        )
 
     def _ensure_collection(self, dim: int) -> None:
         if self.client.collection_exists(self.collection_name):
             return
         self.client.create_collection(
             collection_name=self.collection_name,
-            vectors_config=self.qmodels.VectorParams(
-                size=dim,
-                distance=getattr(self.qmodels.Distance, self.distance),
-            ),
+            vectors_config=self.qmodels.VectorParams(size=dim, distance=self.distance),
         )
+
+    def _build_filter(self, filters: Optional[Dict[str, Any]]) -> Any:
+        if not filters:
+            return None
+        conditions = [
+            self.qmodels.FieldCondition(key=key, match=self.qmodels.MatchValue(value=value))
+            for key, value in filters.items()
+        ]
+        return self.qmodels.Filter(must=conditions)
 
     def add_documents(self, documents: Iterable[Document]) -> None:
         docs = list(documents)
@@ -42,7 +82,11 @@ class QdrantBackend(BaseVectorStore):
         dim = len(docs[0].embedding)
         self._ensure_collection(dim)
         points = [
-            self.qmodels.PointStruct(id=doc.id, vector=doc.embedding, payload=doc.metadata)
+            self.qmodels.PointStruct(
+                id=qdrant_point_id(doc.id),
+                vector=doc.embedding,
+                payload={**doc.metadata, _DOC_ID_PAYLOAD_KEY: doc.id},
+            )
             for doc in docs
         ]
         self.client.upsert(collection_name=self.collection_name, points=points)
@@ -53,33 +97,43 @@ class QdrantBackend(BaseVectorStore):
         limit: int,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[SearchResult]:
-        query_filter = None
-        if filters:
-            conditions = [
-                self.qmodels.FieldCondition(
-                    key=key, match=self.qmodels.MatchValue(value=value)
-                )
-                for key, value in filters.items()
-            ]
-            query_filter = self.qmodels.Filter(must=conditions)
-        results = self.client.search(
-            collection_name=self.collection_name,
-            query_vector=query_vector,
-            limit=limit,
-            query_filter=query_filter,
-        )
-        return [
-            SearchResult(
-                id=str(item.id),
-                score=max(0.0, min(1.0, float(item.score))),
-                metadata=item.payload or {},
+        if not self.client.collection_exists(self.collection_name):
+            return []
+        query_filter = self._build_filter(filters)
+        # qdrant-client >= 1.10: search() deprecated в пользу query_points().
+        if hasattr(self.client, "query_points"):
+            hits = self.client.query_points(
+                collection_name=self.collection_name,
+                query=query_vector,
+                limit=limit,
+                query_filter=query_filter,
+                with_payload=True,
+            ).points
+        else:  # pragma: no cover - старые версии клиента
+            hits = self.client.search(
+                collection_name=self.collection_name,
+                query_vector=query_vector,
+                limit=limit,
+                query_filter=query_filter,
             )
-            for item in results
-        ]
+        results: List[SearchResult] = []
+        for item in hits:
+            payload = dict(item.payload or {})
+            doc_id = payload.pop(_DOC_ID_PAYLOAD_KEY, None) or str(item.id)
+            results.append(
+                SearchResult(
+                    id=str(doc_id),
+                    score=max(0.0, min(1.0, float(item.score))),
+                    metadata=payload,
+                )
+            )
+        return results
 
     def delete(self, doc_ids: Iterable[str]) -> None:
-        ids = list(doc_ids)
+        ids = [qdrant_point_id(doc_id) for doc_id in doc_ids]
         if not ids:
+            return
+        if not self.client.collection_exists(self.collection_name):
             return
         self.client.delete(
             collection_name=self.collection_name,
@@ -87,23 +141,14 @@ class QdrantBackend(BaseVectorStore):
         )
 
     def clear_collection(self) -> None:
-        self.client.delete_collection(collection_name=self.collection_name)
+        if self.client.collection_exists(self.collection_name):
+            self.client.delete_collection(collection_name=self.collection_name)
 
     def count_documents(self, filters: Optional[Dict[str, Any]] = None) -> int:
         if not self.client.collection_exists(self.collection_name):
             return 0
-        query_filter = None
-        if filters:
-            conditions = [
-                self.qmodels.FieldCondition(
-                    key=key, match=self.qmodels.MatchValue(value=value)
-                )
-                for key, value in filters.items()
-            ]
-            query_filter = self.qmodels.Filter(must=conditions)
         result = self.client.count(
             collection_name=self.collection_name,
-            count_filter=query_filter,
+            count_filter=self._build_filter(filters),
         )
         return int(result.count)
-

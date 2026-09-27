@@ -72,15 +72,33 @@ local embedding model, but still install the base dependencies and require
 provider credentials, network access, and may incur usage charges. Extras add
 dependencies; they do not select `VECTOR_STORE` or `EMBEDDINGS` in your settings.
 
-## What's new in 0.3.5
+## What's new in 0.3.6
 
-This maintenance release improves installation instructions, distribution contents,
-and package validation, including dependency checks and ChromaDB/FAISS CI.
-See the [0.3.5 release notes](https://github.com/svalench/django_graph_search/blob/main/RELEASE_NOTES_0.3.5.md).
+Bug-fix and security release. See the
+[0.3.6 release notes](https://github.com/svalench/django_graph_search/blob/main/RELEASE_NOTES_0.3.6.md)
+and [CHANGELOG.md](https://github.com/svalench/django_graph_search/blob/main/CHANGELOG.md).
 
 ```bash
-python -m pip install "django-graph-search[chromadb]==0.3.5"
+python -m pip install "django-graph-search[chromadb]==0.3.6"
 ```
+
+| Area | Change |
+|------|--------|
+| **Security** | With `follow_relations=True` the indexed text no longer includes *unlisted* fields of the root object (e.g. the `auth.User` password hash, which leaked via the REST `text` field). `password` is never indexed. **Rebuild your index after upgrading.** |
+| **Qdrant works** | Point ids are UUID5-derived (Qdrant rejects arbitrary strings) and the `distance` option resolves correctly (`"Cosine"` used to raise). `query_points` is used on modern clients. |
+| **`LANGGRAPH.TIMEOUT_SECONDS` enforced** | Passed to the LLM backend as `self.timeout` and applied as a hard limit around every `expand_query`/`rerank` call, with fallback on overrun. |
+| **Fewer 500s** | `/similar/` returns 404/400 for unknown model / invalid pk; stale index entries and missing `django.contrib.admin` no longer crash; UUID primary keys are supported in metadata. |
+| **Performance** | Search hits are hydrated with one `pk__in` query per model (was one per hit); in-process throttle evicts stale windows. |
+| **Testing & compat** | Real-client integration tests (Qdrant `:memory:`, ChromaDB, FAISS); CI matrix Django 4.2 / 5.1 / 5.2 / 6.0 × Python 3.10–3.13; `mypy` clean. |
+
+<details>
+<summary><strong>0.3.5 highlights</strong> (maintenance)</summary>
+
+Installation instructions, distribution contents and package validation, including
+dependency checks and ChromaDB/FAISS CI.
+See the [0.3.5 release notes](https://github.com/svalench/django_graph_search/blob/main/RELEASE_NOTES_0.3.5.md).
+
+</details>
 
 ## Previous release: 0.3.4
 
@@ -493,7 +511,7 @@ GRAPH_SEARCH = {
         "RERANKING": True,              # Rerank top-K candidates.
         "MAX_EXPANDED_QUERIES": 3,
         "RERANK_TOP_K": 20,
-        "TIMEOUT_SECONDS": 15,
+        "TIMEOUT_SECONDS": 15,          # Hard limit per LLM call (expansion/rerank); on timeout the node falls back.
         "MAX_QUERY_LENGTH": 1024,
         "FALLBACK_ON_ERROR": True,      # Fall back to legacy search on graph errors.
         "USE_FOR_SIMILAR": False,       # Route find_similar through the graph.
@@ -514,6 +532,12 @@ Implement `django_graph_search.llm.BaseLLMBackend` and point
 tiny — `expand_query(query, models, max_variants)` and
 `rerank(query, candidates, top_k)` — so you can wrap any provider
 (OpenAI, Ollama, vLLM, your in-house service) in a few lines.
+
+Your backend receives `LANGGRAPH.TIMEOUT_SECONDS` as `self.timeout` (unless you
+pass an explicit `"timeout"` in `LLM.OPTIONS`) — forward it to your HTTP client.
+Independently of that, the graph enforces the same limit around every
+`expand_query`/`rerank` call: a call that overruns is abandoned and the node falls
+back to the original query / vector order, so a slow LLM can never stall a search.
 
 ### Why optional?
 

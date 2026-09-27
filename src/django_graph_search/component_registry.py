@@ -7,11 +7,16 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 from django.utils.module_loading import import_string
 
 if TYPE_CHECKING:
+    from .backends.base import BaseVectorStore
+    from .embeddings.base import BaseEmbeddingBackend
+    from .graph_resolver import GraphResolver
     from .settings import GraphSearchConfig
 
 # Один vector store + embedding + resolver на процесс (как memory backend в views).
 _registry_lock = threading.Lock()
-_component_registry: Dict[Tuple[Any, ...], Tuple[Any, Any, Any]] = {}
+_component_registry: Dict[
+    Tuple[Any, ...], Tuple["BaseVectorStore", "BaseEmbeddingBackend", "GraphResolver"]
+] = {}
 
 
 def _freeze_options(options: Dict[str, Any]) -> str:
@@ -37,7 +42,7 @@ def _component_cache_key(
 def get_shared_components(
     config: Optional["GraphSearchConfig"] = None,
     embedding_profile: Optional[str] = None,
-) -> Tuple["GraphSearchConfig", object, object, Any]:
+) -> Tuple["GraphSearchConfig", "BaseVectorStore", "BaseEmbeddingBackend", "GraphResolver"]:
     """Тяжёлые компоненты поиска/индексации — singleton на воркер."""
     from .graph_resolver import GraphResolver
     from .settings import get_settings

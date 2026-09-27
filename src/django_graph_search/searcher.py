@@ -3,9 +3,10 @@ from __future__ import annotations
 # pylint: disable=duplicate-code
 
 import logging
-from typing import Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 
 from django.apps import apps
+from django.core.exceptions import ValidationError
 from django.urls import reverse
 
 from .components import ComponentMixin
@@ -113,7 +114,7 @@ class Searcher(ComponentMixin):
             )
             results = [item for item in results if item.id != own_doc_id][:limit]
         results = sort_vector_hits(results)
-        return [self._format_result(item) for item in results]
+        return self._format_results(results)
 
     # ----------------------------------------------------------- legacy path
 
@@ -143,7 +144,7 @@ class Searcher(ComponentMixin):
                 :limit
             ]
         results = sort_vector_hits(results)
-        return [self._format_result(item) for item in results]
+        return self._format_results(results)
 
     # ---------------------------------------------------------- LangGraph path
 
@@ -165,11 +166,11 @@ class Searcher(ComponentMixin):
         # LangGraph + StateGraph(dict): invoke() может не вернуть ключ final_results,
         # хотя узел postprocess отработал (см. stream). Добираем тем же постпроцессом.
         if "final_results" not in out:
-            from .langgraph_agent import postprocess_results_node
+            from .langgraph_agent import SearchState, postprocess_results_node
 
-            out = postprocess_results_node(dict(out))
+            out = postprocess_results_node(cast(SearchState, dict(out)))
         results = out.get("final_results") or []
-        return [self._format_result(item) for item in results]
+        return self._format_results(results)
 
     def _get_or_build_graph(self):
         if self._compiled_graph is not None:
@@ -177,7 +178,10 @@ class Searcher(ComponentMixin):
         from .langgraph_agent import resolve_graph_factory
 
         factory = resolve_graph_factory(self.config.langgraph.search_graph)
-        llm = self._llm_backend or build_llm_backend(self.config.langgraph.llm)
+        llm = self._llm_backend or build_llm_backend(
+            self.config.langgraph.llm,
+            timeout=self.config.langgraph.timeout_seconds,
+        )
         # Forward ``event_hub`` only when the factory accepts it so custom
         # graphs without that parameter keep working.
         kwargs = {
@@ -198,7 +202,38 @@ class Searcher(ComponentMixin):
 
     # --------------------------------------------------------------- helpers
 
-    def _format_result(self, item) -> dict:
+    def _format_results(self, items: List[Any]) -> List[dict]:
+        """Сформировать ответ API; ORM-объекты грузятся одним запросом на модель (без N+1)."""
+        objects = self._load_objects(items)
+        return [self._format_result(item, objects) for item in items]
+
+    def _load_objects(self, items: List[Any]) -> Dict[Tuple[str, str], Any]:
+        """Загрузить объекты по (model, str(pk)) батчами: один запрос на каждую модель."""
+        pks_by_model: Dict[str, List[Any]] = {}
+        for item in items:
+            model_label = item.metadata.get("model")
+            pk = item.metadata.get("pk")
+            if model_label and pk is not None:
+                pks_by_model.setdefault(model_label, []).append(pk)
+
+        loaded: Dict[Tuple[str, str], Any] = {}
+        for model_label, pks in pks_by_model.items():
+            # Индекс может содержать «хвосты» удалённых из проекта моделей —
+            # такие хиты отдаём без data/admin_url вместо 500.
+            try:
+                model_cls = self._get_model_class(model_label)
+            except LookupError:
+                log.warning("Skip stale index entries: model %r is not installed", model_label)
+                continue
+            try:
+                found = model_cls._default_manager.filter(pk__in=pks)
+                for obj in found:
+                    loaded[(model_label, str(obj.pk))] = obj
+            except (ValueError, TypeError, ValidationError) as exc:
+                log.warning("Cannot load %r objects for pks=%r: %s", model_label, pks, exc)
+        return loaded
+
+    def _format_result(self, item, objects: Optional[Dict[Tuple[str, str], Any]] = None) -> dict:
         model_label = item.metadata.get("model")
         pk = item.metadata.get("pk")
         raw_score = item.score
@@ -214,8 +249,9 @@ class Searcher(ComponentMixin):
             "text_preview": preview,
         }
         if model_label and pk is not None:
-            model_cls = self._get_model_class(model_label)
-            obj = model_cls.objects.filter(pk=pk).first()
+            if objects is None:
+                objects = self._load_objects([item])
+            obj = objects.get((model_label, str(pk)))
             if obj is not None:
                 model_cfg = next(
                     (c for c in self.config.models if c.model == model_label), None

@@ -13,6 +13,10 @@ log = logging.getLogger(__name__)
 DEFAULT_MAX_RELATED_ITEMS = 100
 DEFAULT_MAX_TEXT_LENGTH = 8000
 
+# Поля связанных объектов, которые никогда не попадают в индексируемый текст:
+# текст хранится в metadata стора и отдаётся наружу через API (`text`).
+SENSITIVE_FIELD_NAMES = frozenset({"password"})
+
 
 class GraphResolver:
     def __init__(
@@ -53,6 +57,8 @@ class GraphResolver:
         if config.fields == ["__all__"]:
             field_dict = self._collect_fields(instance)
             for name, value in field_dict.items():
+                if name in SENSITIVE_FIELD_NAMES:
+                    continue
                 for text in self._normalize_to_texts(value):
                     parts.extend(self._apply_weight(text, config.weight_fields.get(name)))
         else:
@@ -137,7 +143,12 @@ class GraphResolver:
             max_related_items, _ = self._limits()
         visited: Set[Tuple[str, Any]] = set()
         texts: List[str] = []
-        self._collect_related_text_inner(instance, depth, visited, texts, max_related_items)
+        # Собственные поля корневого объекта уже отобраны через config.fields:
+        # повторно их не добавляем (иначе в индекс утекают неперечисленные
+        # поля — например password hash, — и не работает weight=0).
+        self._collect_related_text_inner(
+            instance, depth, visited, texts, max_related_items, include_own_fields=False
+        )
         return texts
 
     def _collect_related_text_inner(
@@ -147,6 +158,8 @@ class GraphResolver:
         visited: Set[Tuple[str, Any]],
         texts: List[str],
         max_related_items: int,
+        *,
+        include_own_fields: bool = True,
     ) -> None:
         if depth <= 0:
             return
@@ -157,11 +170,8 @@ class GraphResolver:
             return
         visited.add(key)
 
-        for field in instance._meta.concrete_fields:
-            value = getattr(instance, field.name, None)
-            if value is None:
-                continue
-            texts.append(str(value))
+        if include_own_fields:
+            texts.extend(self._own_field_texts(instance))
 
         for field in instance._meta.get_fields():
             if not field.is_relation:
@@ -186,6 +196,19 @@ class GraphResolver:
                 self._collect_related_text_inner(
                     related_value, depth - 1, visited, texts, max_related_items
                 )
+
+    @staticmethod
+    def _own_field_texts(instance: models.Model) -> List[str]:
+        """Текст всех concrete-полей связанного объекта (кроме чувствительных)."""
+        texts: List[str] = []
+        for field in instance._meta.concrete_fields:
+            if field.name in SENSITIVE_FIELD_NAMES:
+                continue
+            value = getattr(instance, field.name, None)
+            if value is None:
+                continue
+            texts.append(str(value))
+        return texts
 
     def _resolve_path(self, instance: models.Model, path: str) -> Any:
         current: Any = instance

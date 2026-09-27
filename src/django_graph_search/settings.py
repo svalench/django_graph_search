@@ -360,6 +360,9 @@ def get_settings() -> GraphSearchConfig:
     max_text_length = int(merged.get("MAX_TEXT_LENGTH", 8000))
     if max_text_length < 1:
         raise ConfigurationError("MAX_TEXT_LENGTH must be >= 1.")
+    default_results_limit = int(merged["DEFAULT_RESULTS_LIMIT"])
+    if default_results_limit < 1:
+        raise ConfigurationError("DEFAULT_RESULTS_LIMIT must be >= 1.")
 
     # Validate backend paths early
     _load_backend(vector_store.backend)
@@ -378,7 +381,7 @@ def get_settings() -> GraphSearchConfig:
         auto_index_non_blocking=bool(merged.get("AUTO_INDEX_NON_BLOCKING", True)),
         max_related_items=max_related_items,
         max_text_length=max_text_length,
-        default_results_limit=int(merged["DEFAULT_RESULTS_LIMIT"]),
+        default_results_limit=default_results_limit,
         delta_indexing=bool(merged.get("DELTA_INDEXING", False)),
         cache=cache_cfg,
         langgraph=langgraph_cfg,
