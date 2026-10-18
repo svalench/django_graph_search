@@ -72,7 +72,18 @@ local embedding model, but still install the base dependencies and require
 provider credentials, network access, and may incur usage charges. Extras add
 dependencies; they do not select `VECTOR_STORE` or `EMBEDDINGS` in your settings.
 
-## What's new in 0.3.6
+## What's new in 0.3.7
+
+Security and reliability maintenance: consistent password-field protection,
+per-user authenticated conversation history, CSRF middleware protection,
+request validation, and filtered pgvector search fixes.
+[Release notes](RELEASE_NOTES_0.3.7.md). Upgrade and rebuild existing indexes.
+
+```bash
+python -m pip install "django-graph-search[chromadb]==0.3.7"
+```
+
+## Previous release: 0.3.6
 
 Bug-fix and security release. See the
 [0.3.6 release notes](https://github.com/svalench/django_graph_search/blob/main/RELEASE_NOTES_0.3.6.md)
@@ -599,7 +610,17 @@ Endpoint: `POST /api/search/conversation/`
 ```
 
 Use `DELETE /api/search/conversation/?conversation_id=abc-123` to clear a
-conversation.
+conversation. Authenticated history is scoped to the Django user's primary key;
+another user cannot read or clear it by reusing the same conversation ID.
+Upgrading to 0.3.7 starts new history namespaces. Anonymous conversation IDs
+remain bearer identifiers: keep them private and use server-generated random IDs.
+Require authentication for private conversations.
+
+Keep `django.middleware.csrf.CsrfViewMiddleware` enabled and send a valid
+`X-CSRFToken` header together with the CSRF cookie on POST/DELETE requests.
+This applies to all clients when the middleware is enabled, including token or
+custom-permission clients; authentication alone does not bypass CSRF checks.
+These endpoints no longer bypass Django's CSRF middleware.
 
 Built-in memory backends:
 

@@ -29,12 +29,14 @@ class DjangoGraphSearchConfig(AppConfig):
         """Однократные предупреждения о небезопасных прод-конфигурациях API."""
         if django_settings.DEBUG:
             return
-        if cfg.api.require_authentication and not cfg.api.permission_classes:
+        if (
+            cfg.api.require_authentication
+            and "django.middleware.csrf.CsrfViewMiddleware" not in django_settings.MIDDLEWARE
+        ):
             warnings.warn(
                 "GRAPH_SEARCH API uses Django session authentication while "
-                "POST/DELETE endpoints are csrf_exempt. Cookie-authenticated "
-                "clients are exposed to CSRF. Configure API.PERMISSION_CLASSES "
-                "with a token-based permission (or keep endpoints internal).",
+                "CsrfViewMiddleware is missing. Enable Django CSRF middleware "
+                "to protect cookie-authenticated POST/DELETE requests.",
                 stacklevel=2,
                 category=RuntimeWarning,
             )

@@ -7,6 +7,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.7] — 2026-10-18
+
+Security and reliability maintenance release. Upgrade and rebuild existing indexes.
+
+- Exclude password fields consistently from indexed text and result data.
+- Isolate authenticated conversation history by user; existing history starts fresh.
+- Restore Django CSRF middleware protection for POST/DELETE search endpoints.
+  When CSRF middleware is enabled, all clients must send a valid CSRF token.
+- Fail closed when a configured permission/throttle entry cannot be used.
+- Validate JSON request shapes and keep backend exception details in server logs.
+- Correct pgvector query parameter ordering when model filters are supplied.
+- Add regression tests for these security and reliability paths.
+
 ## [0.3.6] — 2026-09-27
 
 Bug-fix and security release: closes an indexed-text leak, makes the Qdrant backend actually work, enforces `LANGGRAPH.TIMEOUT_SECONDS`, and adds real-client integration tests.

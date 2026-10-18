@@ -213,6 +213,8 @@ class GraphResolver:
     def _resolve_path(self, instance: models.Model, path: str) -> Any:
         current: Any = instance
         parts = path.split("__")
+        if any(part in SENSITIVE_FIELD_NAMES for part in parts):
+            return None
         for index, part in enumerate(parts):
             if current is None:
                 return None
