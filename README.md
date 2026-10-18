@@ -465,6 +465,9 @@ GRAPH_SEARCH = {
 
 ## Supported Backends
 
+See [SECURITY.md](SECURITY.md) for current dependency advisories and supported
+local ChromaDB usage. Chroma server deployments need a separate security review.
+
 | Backend | Best for | Server required |
 |---|---|---|
 | ChromaDB | Development, small-medium datasets | No |

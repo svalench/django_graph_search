@@ -441,7 +441,7 @@ class ConversationalSearchAPIView(SearchPermissionMixin, View):
             if content_type == "application/json":
                 try:
                     return json.loads(request.body.decode("utf-8"))
-                except (ValueError, UnicodeDecodeError):
+                except (ValueError, UnicodeDecodeError, RecursionError):
                     return {}
         # Fall back to form data / query params.
         merged: Dict[str, Any] = {}
@@ -591,7 +591,7 @@ class StreamingSearchAPIView(SearchPermissionMixin, View):
             if ctype == "application/json":
                 try:
                     return json.loads(request.body.decode("utf-8"))
-                except (ValueError, UnicodeDecodeError):
+                except (ValueError, UnicodeDecodeError, RecursionError):
                     return {}
         merged: Dict[str, Any] = {}
         merged.update(request.POST.dict() if hasattr(request.POST, "dict") else {})

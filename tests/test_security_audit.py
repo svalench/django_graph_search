@@ -139,3 +139,13 @@ def test_misconfigured_access_checks_fail_closed(graph_search_settings, setting,
     check = check_permissions if setting == "PERMISSION_CLASSES" else check_throttle
     with pytest.raises(PermissionDenied):
         check(RequestFactory().get("/"), cfg)
+
+
+@pytest.mark.parametrize("view", [ConversationalSearchAPIView, StreamingSearchAPIView])
+def test_deeply_nested_json_returns_400(graph_search_settings, view):
+    graph_search_settings(_base_settings({"STREAMING": {"ENABLED": True}}))
+    request = RequestFactory().post(
+        "/", "[" * 2000 + "]" * 2000, content_type="application/json"
+    )
+    with patch("django_graph_search.views.Searcher"):
+        assert view.as_view()(request).status_code == 400
