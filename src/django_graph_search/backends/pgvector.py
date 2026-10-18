@@ -131,7 +131,7 @@ class PgvectorBackend(BaseVectorStore):
         self._ensure_table()
         tbl = self.table_name
         vec = self._vector_literal(query_vector)
-        params: List[Any] = []
+        params: List[Any] = [vec]
         where_sql = ""
         if filters:
             params.append(json.dumps(filters))
@@ -152,7 +152,7 @@ class PgvectorBackend(BaseVectorStore):
             f"SELECT id, metadata, {score_expr} AS score FROM {tbl} "
             f"{where_sql} ORDER BY embedding {order_op} %s::vector LIMIT %s"
         )
-        params.extend([vec, vec, limit])
+        params.extend([vec, limit])
         conn = connections[self.using]
         with conn.cursor() as cursor:
             cursor.execute(sql, params)

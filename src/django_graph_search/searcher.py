@@ -11,7 +11,7 @@ from django.urls import reverse
 
 from .components import ComponentMixin
 from .events import EventHub
-from .graph_resolver import GraphResolver
+from .graph_resolver import GraphResolver, SENSITIVE_FIELD_NAMES
 from .langgraph_agent import sort_vector_hits
 from .llm import BaseLLMBackend, build_llm_backend
 from .settings import GraphSearchConfig, ModelConfig
@@ -270,6 +270,8 @@ class Searcher(ComponentMixin):
             allowed = {f.split("__", 1)[0] for f in model_cfg.fields}
         data = {}
         for field in instance._meta.concrete_fields:
+            if field.name in SENSITIVE_FIELD_NAMES:
+                continue
             if allowed is not None and field.name not in allowed:
                 continue
             value = getattr(instance, field.name, None)

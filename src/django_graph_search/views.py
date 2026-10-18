@@ -13,9 +13,7 @@ from django.apps import apps
 from django.conf import settings as django_settings
 from django.core.exceptions import ValidationError
 from django.http import HttpRequest, JsonResponse, StreamingHttpResponse
-from django.utils.decorators import method_decorator
 from django.views import View
-from django.views.decorators.csrf import csrf_exempt
 
 from .events import EventHub
 from .searcher import Searcher
@@ -231,6 +229,30 @@ def get_conversation_memory_backend(cfg: GraphSearchConfig) -> Any:
         return backend
 
 
+def _validate_search_payload(payload: Any) -> Optional[JsonResponse]:
+    if not isinstance(payload, dict):
+        return JsonResponse({"error": "JSON body must be an object."}, status=400)
+    for key in ("query", "q", "conversation_id"):
+        value = payload.get(key)
+        if value is not None and not isinstance(value, str):
+            return JsonResponse({"error": f"'{key}' must be a string."}, status=400)
+    models = payload.get("models")
+    if models is not None and not isinstance(models, str):
+        if not isinstance(models, list) or not all(isinstance(m, str) for m in models):
+            return JsonResponse(
+                {"error": "'models' must be a string or list of strings."}, status=400
+            )
+    return None
+
+
+def _request_conversation_memory(request: HttpRequest, cfg: GraphSearchConfig) -> Any:
+    from .memory.scoped import ScopedMemoryBackend
+
+    user = getattr(request, "user", None)
+    scope = f"user:{user.pk}" if user is not None and user.is_authenticated else "anonymous"
+    return ScopedMemoryBackend(get_conversation_memory_backend(cfg), scope)
+
+
 class SearchAPIView(SearchPermissionMixin, View):
     def get(self, request: HttpRequest, *args: Any, **kwargs: Any) -> JsonResponse:
         denied = self._check_access(request)
@@ -274,7 +296,6 @@ class SearchAPIView(SearchPermissionMixin, View):
         return JsonResponse(payload, status=200)
 
 
-@method_decorator(csrf_exempt, name="dispatch")
 class ConversationalSearchAPIView(SearchPermissionMixin, View):
     """Session-aware semantic search.
 
@@ -323,6 +344,8 @@ class ConversationalSearchAPIView(SearchPermissionMixin, View):
     """
 
     def post(self, request: HttpRequest, *args: Any, **kwargs: Any) -> JsonResponse:
+        # Each validation/access branch returns a specific HTTP error.
+        # pylint: disable=too-many-return-statements
         denied = self._check_access(request)
         if denied is not None:
             return denied
@@ -345,6 +368,9 @@ class ConversationalSearchAPIView(SearchPermissionMixin, View):
         if not cfg.conversational.enabled:
             return JsonResponse({"error": "Conversational search is disabled."}, status=404)
         payload = self._parse_body(request)
+        invalid = _validate_search_payload(payload)
+        if invalid is not None:
+            return invalid
         query = (payload.get("query") or "").strip()
         if not query:
             return JsonResponse({"error": "Parameter 'query' is required."}, status=400)
@@ -362,7 +388,7 @@ class ConversationalSearchAPIView(SearchPermissionMixin, View):
         if err is not None:
             return err
 
-        memory = get_conversation_memory_backend(cfg)
+        memory = _request_conversation_memory(request, cfg)
         searcher = Searcher()
         graph = self._build_graph(cfg, searcher=searcher, memory=memory)
         state = {
@@ -395,10 +421,14 @@ class ConversationalSearchAPIView(SearchPermissionMixin, View):
         cfg = get_settings()
         if not cfg.conversational.enabled:
             return JsonResponse({"error": "Conversational search is disabled."}, status=404)
-        cid = request.GET.get("conversation_id") or self._parse_body(request).get("conversation_id")
+        payload = self._parse_body(request)
+        invalid = _validate_search_payload(payload)
+        if invalid is not None:
+            return invalid
+        cid = request.GET.get("conversation_id") or payload.get("conversation_id")
         if not cid:
             return JsonResponse({"error": "conversation_id is required."}, status=400)
-        memory = get_conversation_memory_backend(cfg)
+        memory = _request_conversation_memory(request, cfg)
         memory.clear_history(cid)
         return JsonResponse({"conversation_id": cid, "cleared": True}, status=200)
 
@@ -410,8 +440,8 @@ class ConversationalSearchAPIView(SearchPermissionMixin, View):
             content_type = (request.META.get("CONTENT_TYPE") or "").split(";")[0].strip()
             if content_type == "application/json":
                 try:
-                    return json.loads(request.body.decode("utf-8")) or {}
-                except (ValueError, UnicodeDecodeError):
+                    return json.loads(request.body.decode("utf-8"))
+                except (ValueError, UnicodeDecodeError, RecursionError):
                     return {}
         # Fall back to form data / query params.
         merged: Dict[str, Any] = {}
@@ -427,7 +457,6 @@ class ConversationalSearchAPIView(SearchPermissionMixin, View):
         return factory(cfg, searcher=searcher, memory=memory)
 
 
-@method_decorator(csrf_exempt, name="dispatch")
 class StreamingSearchAPIView(SearchPermissionMixin, View):
     """Stream pipeline events back to the client as they happen.
 
@@ -471,6 +500,9 @@ class StreamingSearchAPIView(SearchPermissionMixin, View):
             return JsonResponse({"error": "Streaming search is disabled."}, status=404)
 
         payload = self._extract_payload(request)
+        invalid = _validate_search_payload(payload)
+        if invalid is not None:
+            return invalid
         query = (payload.get("q") or payload.get("query") or "").strip()
         if not query:
             return JsonResponse({"error": "Parameter 'q' is required."}, status=400)
@@ -504,8 +536,7 @@ class StreamingSearchAPIView(SearchPermissionMixin, View):
                 )
             except Exception as exc:  # noqa: BLE001
                 log.exception("Streaming search failed: %s", exc)
-                result_holder["error"] = str(exc)
-                hub.publish({"type": "error", "message": str(exc)})
+                hub.publish({"type": "error", "message": "Search failed."})
             finally:
                 events_queue.put(sentinel)
 
@@ -559,8 +590,8 @@ class StreamingSearchAPIView(SearchPermissionMixin, View):
             ctype = (request.META.get("CONTENT_TYPE") or "").split(";")[0].strip()
             if ctype == "application/json":
                 try:
-                    return json.loads(request.body.decode("utf-8")) or {}
-                except (ValueError, UnicodeDecodeError):
+                    return json.loads(request.body.decode("utf-8"))
+                except (ValueError, UnicodeDecodeError, RecursionError):
                     return {}
         merged: Dict[str, Any] = {}
         merged.update(request.POST.dict() if hasattr(request.POST, "dict") else {})

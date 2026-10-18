@@ -100,9 +100,10 @@ def check_permissions(request: HttpRequest, config: GraphSearchConfig) -> None:
                 raise PermissionDenied()
         else:
             log.warning(
-                "Permission entry %r is neither a class nor a callable — skipped.",
+                "Permission entry %r is neither a permission class nor a callable.",
                 dotted_path,
             )
+            raise PermissionDenied("Misconfigured permission class.")
 
 
 def check_throttle(request: HttpRequest, config: GraphSearchConfig) -> None:
@@ -134,7 +135,7 @@ def check_throttle(request: HttpRequest, config: GraphSearchConfig) -> None:
             cls = import_string(dotted_path)
         except ImportError as exc:
             log.error("Cannot import throttle class %r: %s", dotted_path, exc)
-            continue
+            raise PermissionDenied("Misconfigured throttle class.") from exc
 
         # DRF-стиль с allow_request
         if isinstance(cls, type) and hasattr(cls, "allow_request"):
@@ -159,9 +160,10 @@ def check_throttle(request: HttpRequest, config: GraphSearchConfig) -> None:
         else:
             log.warning(
                 "Throttle entry %r is neither a DRF-style throttle class nor a "
-                "plain function — skipped.",
+                "plain function.",
                 dotted_path,
             )
+            raise PermissionDenied("Misconfigured throttle class.")
 
 
 def _parse_rate(rate: str) -> Tuple[int, float]:
